@@ -46,9 +46,36 @@ function parseSRT(content: string): TranscriptSegment[] {
 }
 
 function parseVTT(content: string): TranscriptSegment[] {
-  // VTT is similar to SRT but starts with "WEBVTT" header
+  // VTT is similar to SRT but starts with "WEBVTT" header and
+  // blocks don't require a sequence number line
   const withoutHeader = content.replace(/^WEBVTT[^\n]*\n\n?/, '');
-  return parseSRT(withoutHeader);
+  const segments: TranscriptSegment[] = [];
+  const blocks = withoutHeader.trim().split(/\n\s*\n/);
+  const timeRe = /(\d{2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2})[,.](\d{3})/;
+
+  for (const block of blocks) {
+    const lines = block.trim().split('\n');
+    if (lines.length < 2) continue;
+
+    // Find the timestamp line (could be first or second if cue ID is present)
+    let timeLine = -1;
+    for (let i = 0; i < Math.min(2, lines.length); i++) {
+      if (timeRe.test(lines[i])) {
+        timeLine = i;
+        break;
+      }
+    }
+    if (timeLine === -1) continue;
+
+    const timeMatch = lines[timeLine].match(timeRe)!;
+    const startTime = srtTimeToSeconds(timeMatch.slice(1, 5));
+    const endTime = srtTimeToSeconds(timeMatch.slice(5, 9));
+    const text = lines.slice(timeLine + 1).join(' ').trim();
+
+    segments.push({ startTime, endTime, text });
+  }
+
+  return segments;
 }
 
 function parsePlainTimestamped(content: string): TranscriptSegment[] {

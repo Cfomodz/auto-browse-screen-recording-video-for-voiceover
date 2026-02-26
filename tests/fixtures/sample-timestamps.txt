@@ -1,0 +1,3 @@
+[0:00] Artificial intelligence overview
+[0:05] Machine learning basics
+[0:10] Neural network architecture
