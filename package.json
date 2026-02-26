@@ -9,7 +9,9 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/cli.js",
-    "dev": "ts-node src/cli.ts"
+    "dev": "ts-node src/cli.ts",
+    "debug-audio": "ts-node scripts/debug-audio-devices.ts",
+    "debug-typing-audio": "ts-node scripts/debug-typing-recorder-audio.ts"
   },
   "dependencies": {
     "puppeteer-core": "^23.0.0",

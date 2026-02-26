@@ -6,18 +6,65 @@ import { KeystrokeEvent, TypingClipMeta } from '../core/types';
 import { Logger } from '../utils/logger';
 import type { TypingPattern } from './coverage';
 
-/** On Windows, get first DirectShow audio capture device for ffmpeg dshow. */
-function getFirstDshowAudioDevice(): string | null {
+/** On Windows, list all DirectShow audio capture device names (exact strings ffmpeg expects). */
+function getDshowAudioDevices(): string[] {
+  const names: string[] = [];
   try {
     const result = child_process.spawnSync('ffmpeg', [
       '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy',
     ], { encoding: 'utf8', maxBuffer: 100 * 1024, windowsHide: true });
     const stderr = (result.stderr ?? result.stdout ?? '') as string;
-    const match = stderr.match(/"([^"]+)"\s*\(audio\)/);
-    return match ? match[1] : null;
+    const regex = /"([^"]+)"\s*\(audio\)/g;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(stderr)) !== null) names.push(match[1]);
   } catch {
-    return null;
+    /* ignore */
   }
+  return names;
+}
+
+/** On Windows, get first DirectShow audio device, or null if none. */
+function getFirstDshowAudioDevice(): string | null {
+  const list = getDshowAudioDevices();
+  return list.length > 0 ? list[0] : null;
+}
+
+/** Return the highest existing clip number in dir (e.g. 24 for clip_0024.*), or 0 if none. */
+function getMaxExistingClipNumber(dir: string): number {
+  let max = 0;
+  try {
+    const names = fs.readdirSync(dir);
+    const re = /^clip_(\d+)\.(json|wav|flac)$/i;
+    for (const name of names) {
+      const m = name.match(re);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (n > max) max = n;
+      }
+    }
+  } catch {
+    /* dir missing or unreadable */
+  }
+  return max;
+}
+
+/** Return the highest existing session number in dir (e.g. 3 for session_003.*), or 0 if none. */
+function getMaxExistingSessionNumber(dir: string): number {
+  let max = 0;
+  try {
+    const names = fs.readdirSync(dir);
+    const re = /^session_(\d+)\.(json|wav|flac)$/i;
+    for (const name of names) {
+      const m = name.match(re);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (n > max) max = n;
+      }
+    }
+  } catch {
+    /* dir missing or unreadable */
+  }
+  return max;
 }
 
 /**
@@ -50,6 +97,9 @@ export class KeystrokeRecorder extends EventEmitter {
   private typedText = '';
   private clipCounter = 0;
   private audioProcess: ReturnType<typeof import('child_process').spawn> | null = null;
+  /** Override for current clip (used when saving to sessions dir). */
+  private currentClipDir: string | null = null;
+  private currentClipBaseName: string | null = null;
 
   constructor(options: {
     outputDir: string;
@@ -66,6 +116,7 @@ export class KeystrokeRecorder extends EventEmitter {
     this.logger = options.logger;
 
     fs.mkdirSync(this.outputDir, { recursive: true });
+    this.clipCounter = getMaxExistingClipNumber(this.outputDir);
   }
 
   /**
@@ -73,15 +124,22 @@ export class KeystrokeRecorder extends EventEmitter {
    *
    * Begins capturing audio from the system microphone and logging keystrokes.
    * Returns the clip name for reference.
+   * @param options.outputDir - If set, save this clip here instead of this.outputDir (e.g. sessions).
+   * @param options.baseName - If set, use this base name instead of clip_NNN (e.g. session_001).
    */
-  async startClip(): Promise<string> {
+  async startClip(options?: { outputDir?: string; baseName?: string }): Promise<string> {
     if (this.recording) {
       throw new Error('Already recording. Stop the current clip first.');
     }
 
-    this.clipCounter++;
-    const clipName = `clip_${String(this.clipCounter).padStart(4, '0')}`;
-    const audioPath = path.join(this.outputDir, `${clipName}.${this.audioFormat}`);
+    const useDir = options?.outputDir ?? this.outputDir;
+    const baseName = options?.baseName ?? `clip_${String(++this.clipCounter).padStart(4, '0')}`;
+    if (!options?.outputDir) {
+      this.clipCounter = parseInt(baseName.replace(/\D/g, ''), 10) || this.clipCounter;
+    }
+    this.currentClipDir = useDir;
+    this.currentClipBaseName = baseName;
+    const audioPath = path.join(useDir, `${baseName}.${this.audioFormat}`);
 
     // Reset state
     this.keystrokes = [];
@@ -105,10 +163,10 @@ export class KeystrokeRecorder extends EventEmitter {
     });
     this.startTime = Date.now();
 
-    this.logger.info(`Recording started: ${clipName}`);
+    this.logger.info(`Recording started: ${baseName}`);
     this.logger.info('Type naturally. Press Ctrl+D or Ctrl+C to stop this clip.');
 
-    return clipName;
+    return baseName;
   }
 
   /**
@@ -148,16 +206,34 @@ export class KeystrokeRecorder extends EventEmitter {
     this.recording = false;
     const durationMs = Date.now() - this.startTime;
 
-    // Stop audio capture
+    // Stop audio capture: send 'q' so ffmpeg flushes and closes the WAV (kill on Windows often leaves no file)
     if (this.audioProcess) {
-      this.audioProcess.kill('SIGINT');
-      // Give it a moment to finalize the audio file
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      const proc = this.audioProcess;
       this.audioProcess = null;
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          proc.kill('SIGKILL');
+          resolve();
+        }, 8000);
+        proc.once('exit', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+        if (proc.stdin?.writable) {
+          proc.stdin.write('q');
+          proc.stdin.end();
+        } else {
+          proc.kill('SIGINT');
+          setTimeout(resolve, 500);
+        }
+      });
     }
 
-    const clipName = `clip_${String(this.clipCounter).padStart(4, '0')}`;
+    const clipName = this.currentClipBaseName ?? `clip_${String(this.clipCounter).padStart(4, '0')}`;
     const audioFile = `${clipName}.${this.audioFormat}`;
+    const metaDir = this.currentClipDir ?? this.outputDir;
+    this.currentClipDir = null;
+    this.currentClipBaseName = null;
 
     // Count backspace sequences
     let backspaceSequences = 0;
@@ -185,7 +261,7 @@ export class KeystrokeRecorder extends EventEmitter {
     };
 
     // Save the metadata sidecar
-    const metaPath = path.join(this.outputDir, `${clipName}.json`);
+    const metaPath = path.join(metaDir, `${clipName}.json`);
     fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
 
     this.logger.info(
@@ -200,6 +276,7 @@ export class KeystrokeRecorder extends EventEmitter {
   /** Start audio capture using the configured backend. */
   private startAudioCapture(outputPath: string): ReturnType<typeof import('child_process').spawn> {
     const { spawn } = require('child_process') as typeof import('child_process');
+    const absolutePath = path.resolve(outputPath);
 
     let args: string[];
 
@@ -227,10 +304,15 @@ export class KeystrokeRecorder extends EventEmitter {
       default: {
         const isWin = process.platform === 'win32';
         if (isWin) {
-          // Windows: DirectShow. "default" is not valid — resolve to first audio device.
-          let device = process.env.TYPING_AUDIO_DEVICE;
-          if (!device || device === 'default') {
-            device = getFirstDshowAudioDevice() ?? device ?? 'default';
+          // Windows: use only device names that ffmpeg actually lists (exact match required).
+          const list = getDshowAudioDevices();
+          const preferred = process.env.TYPING_AUDIO_DEVICE;
+          const device =
+            preferred && list.includes(preferred) ? preferred : list[0];
+          if (!device) {
+            throw new Error(
+              'No DirectShow audio device found. Run: ffmpeg -list_devices true -f dshow -i dummy'
+            );
           }
           args = [
             '-f', 'dshow',
@@ -238,7 +320,7 @@ export class KeystrokeRecorder extends EventEmitter {
             '-ar', String(this.sampleRate),
             '-ac', '1',
             '-y',
-            outputPath,
+            absolutePath,
           ];
         } else {
           // Linux: PulseAudio (or use 'alsa' if needed)
@@ -248,7 +330,7 @@ export class KeystrokeRecorder extends EventEmitter {
             '-ar', String(this.sampleRate),
             '-ac', '1',
             '-y',
-            outputPath,
+            absolutePath,
           ];
         }
         return spawn('ffmpeg', args, { stdio: 'pipe' });
@@ -340,6 +422,71 @@ export class KeystrokeRecorder extends EventEmitter {
               process.stdout.write(' ');
             } else if (code >= 32 && code < 127) {
               // Printable character
+              this.recordKeystroke(char);
+              process.stdout.write(char);
+            }
+          }
+        }
+      });
+    });
+  }
+
+  /**
+   * Run a single free-form recording: start immediately, type naturally, Escape to stop.
+   * Saves to outputDir/sessions/session_NNN.(wav|json). We then extract coverage clips from this.
+   * Returns path to the session JSON, or null if not used.
+   */
+  async runFreeFormSession(): Promise<{ sessionJsonPath: string; sessionWavPath: string } | null> {
+    if (!process.stdin.isTTY) {
+      this.logger.error('Free-form session requires a TTY terminal.');
+      return null;
+    }
+
+    const sessionsDir = path.join(this.outputDir, 'sessions');
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    const n = getMaxExistingSessionNumber(sessionsDir) + 1;
+    const baseName = `session_${String(n).padStart(3, '0')}`;
+
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding('utf-8');
+
+    this.logger.info('=== Free-form typing — record naturally ===');
+    this.logger.info('Type anything (real text, nonsense, whatever feels natural).');
+    this.logger.info('Press Escape when done. We will extract coverage clips from this after.');
+    this.logger.info('');
+
+    await this.startClip({ outputDir: sessionsDir, baseName });
+
+    return new Promise((resolve) => {
+      process.stdin.on('data', async (data: string) => {
+        for (const char of data) {
+          const code = char.charCodeAt(0);
+
+          if (code === 27) {
+            if (this.recording) {
+              await this.stopClip();
+            }
+            process.stdin.setRawMode(false);
+            process.stdin.pause();
+            resolve({
+              sessionJsonPath: path.join(sessionsDir, `${baseName}.json`),
+              sessionWavPath: path.join(sessionsDir, `${baseName}.${this.audioFormat}`),
+            });
+            return;
+          }
+
+          if (this.recording) {
+            if (code === 127 || code === 8) {
+              this.recordKeystroke('backspace');
+              process.stdout.write('\b \b');
+            } else if (code === 13) {
+              this.recordKeystroke('enter');
+              process.stdout.write('\n');
+            } else if (code === 32) {
+              this.recordKeystroke('space');
+              process.stdout.write(' ');
+            } else if (code >= 32 && code < 127) {
               this.recordKeystroke(char);
               process.stdout.write(char);
             }
