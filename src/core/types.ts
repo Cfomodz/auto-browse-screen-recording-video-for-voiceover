@@ -87,6 +87,8 @@ export interface SfxConfig {
     enabled: boolean;
     /** Directory of pre-recorded keystroke audio clips (from keystroke-recorder). */
     samplesDir: string;
+    /** Loudness target in LUFS when extracting clips from sessions (default -14; -10 is louder). */
+    targetLUFS?: number;
   };
 }
 

@@ -1,0 +1,78 @@
+{
+  "audioFile": "clip_0009.wav",
+  "durationMs": 1771,
+  "typedText": "here this summer",
+  "wordCount": 3,
+  "backspaceSequences": 0,
+  "maxConsecutiveBackspaces": 0,
+  "keystrokes": [
+    {
+      "key": "space",
+      "timestampMs": 0
+    },
+    {
+      "key": "h",
+      "timestampMs": 205
+    },
+    {
+      "key": "e",
+      "timestampMs": 327
+    },
+    {
+      "key": "r",
+      "timestampMs": 401
+    },
+    {
+      "key": "e",
+      "timestampMs": 507
+    },
+    {
+      "key": "space",
+      "timestampMs": 630
+    },
+    {
+      "key": "t",
+      "timestampMs": 753
+    },
+    {
+      "key": "h",
+      "timestampMs": 819
+    },
+    {
+      "key": "i",
+      "timestampMs": 941
+    },
+    {
+      "key": "s",
+      "timestampMs": 988
+    },
+    {
+      "key": "space",
+      "timestampMs": 1086
+    },
+    {
+      "key": "s",
+      "timestampMs": 1268
+    },
+    {
+      "key": "u",
+      "timestampMs": 1317
+    },
+    {
+      "key": "m",
+      "timestampMs": 1477
+    },
+    {
+      "key": "m",
+      "timestampMs": 1605
+    },
+    {
+      "key": "e",
+      "timestampMs": 1695
+    },
+    {
+      "key": "r",
+      "timestampMs": 1771
+    }
+  ]
+}

@@ -1,0 +1,122 @@
+{
+  "audioFile": "clip_0011.wav",
+  "durationMs": 3948,
+  "typedText": "did you give Nick",
+  "wordCount": 4,
+  "backspaceSequences": 2,
+  "maxConsecutiveBackspaces": 3,
+  "keystrokes": [
+    {
+      "key": "d",
+      "timestampMs": 0
+    },
+    {
+      "key": "i",
+      "timestampMs": 95
+    },
+    {
+      "key": "d",
+      "timestampMs": 167
+    },
+    {
+      "key": "space",
+      "timestampMs": 274
+    },
+    {
+      "key": "y",
+      "timestampMs": 453
+    },
+    {
+      "key": "o",
+      "timestampMs": 499
+    },
+    {
+      "key": "u",
+      "timestampMs": 598
+    },
+    {
+      "key": "space",
+      "timestampMs": 656
+    },
+    {
+      "key": "g",
+      "timestampMs": 819
+    },
+    {
+      "key": "i",
+      "timestampMs": 931
+    },
+    {
+      "key": "v",
+      "timestampMs": 1011
+    },
+    {
+      "key": "e",
+      "timestampMs": 1188
+    },
+    {
+      "key": "space",
+      "timestampMs": 1302
+    },
+    {
+      "key": "n",
+      "timestampMs": 1628
+    },
+    {
+      "key": "i",
+      "timestampMs": 1754
+    },
+    {
+      "key": "c",
+      "timestampMs": 1883
+    },
+    {
+      "key": "k",
+      "timestampMs": 2028
+    },
+    {
+      "key": "backspace",
+      "timestampMs": 2237
+    },
+    {
+      "key": "backspace",
+      "timestampMs": 2397
+    },
+    {
+      "key": "backspace",
+      "timestampMs": 2548
+    },
+    {
+      "key": "N",
+      "timestampMs": 2848
+    },
+    {
+      "key": "backspace",
+      "timestampMs": 3095
+    },
+    {
+      "key": "backspace",
+      "timestampMs": 3237
+    },
+    {
+      "key": "N",
+      "timestampMs": 3417
+    },
+    {
+      "key": "i",
+      "timestampMs": 3562
+    },
+    {
+      "key": "c",
+      "timestampMs": 3719
+    },
+    {
+      "key": "k",
+      "timestampMs": 3859
+    },
+    {
+      "key": "space",
+      "timestampMs": 3948
+    }
+  ]
+}

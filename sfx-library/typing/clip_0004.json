@@ -1,0 +1,30 @@
+{
+  "audioFile": "clip_0004.wav",
+  "durationMs": 596,
+  "typedText": "ften",
+  "wordCount": 1,
+  "backspaceSequences": 0,
+  "maxConsecutiveBackspaces": 0,
+  "keystrokes": [
+    {
+      "key": "f",
+      "timestampMs": 0
+    },
+    {
+      "key": "t",
+      "timestampMs": 300
+    },
+    {
+      "key": "e",
+      "timestampMs": 486
+    },
+    {
+      "key": "n",
+      "timestampMs": 541
+    },
+    {
+      "key": "space",
+      "timestampMs": 596
+    }
+  ]
+}

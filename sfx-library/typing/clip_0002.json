@@ -1,0 +1,406 @@
+{
+  "audioFile": "clip_0002.wav",
+  "durationMs": 16159,
+  "typedText": "a critical unpleasant story, but what it was I had forgotten what it was long ago. Wake me at",
+  "wordCount": 19,
+  "backspaceSequences": 2,
+  "maxConsecutiveBackspaces": 1,
+  "keystrokes": [
+    {
+      "key": "space",
+      "timestampMs": 0
+    },
+    {
+      "key": "a",
+      "timestampMs": 239
+    },
+    {
+      "key": "space",
+      "timestampMs": 340
+    },
+    {
+      "key": "c",
+      "timestampMs": 707
+    },
+    {
+      "key": "r",
+      "timestampMs": 892
+    },
+    {
+      "key": "i",
+      "timestampMs": 975
+    },
+    {
+      "key": "t",
+      "timestampMs": 1117
+    },
+    {
+      "key": "i",
+      "timestampMs": 1221
+    },
+    {
+      "key": "c",
+      "timestampMs": 1430
+    },
+    {
+      "key": "a",
+      "timestampMs": 1550
+    },
+    {
+      "key": "l",
+      "timestampMs": 1673
+    },
+    {
+      "key": "space",
+      "timestampMs": 1750
+    },
+    {
+      "key": "u",
+      "timestampMs": 2279
+    },
+    {
+      "key": "n",
+      "timestampMs": 2405
+    },
+    {
+      "key": "p",
+      "timestampMs": 2670
+    },
+    {
+      "key": "l",
+      "timestampMs": 2835
+    },
+    {
+      "key": "e",
+      "timestampMs": 2958
+    },
+    {
+      "key": "a",
+      "timestampMs": 3042
+    },
+    {
+      "key": "s",
+      "timestampMs": 3152
+    },
+    {
+      "key": "a",
+      "timestampMs": 3455
+    },
+    {
+      "key": "n",
+      "timestampMs": 3580
+    },
+    {
+      "key": "t",
+      "timestampMs": 3761
+    },
+    {
+      "key": "space",
+      "timestampMs": 3859
+    },
+    {
+      "key": "s",
+      "timestampMs": 4184
+    },
+    {
+      "key": "t",
+      "timestampMs": 4361
+    },
+    {
+      "key": "o",
+      "timestampMs": 4436
+    },
+    {
+      "key": "r",
+      "timestampMs": 4591
+    },
+    {
+      "key": "y",
+      "timestampMs": 4717
+    },
+    {
+      "key": ",",
+      "timestampMs": 4950
+    },
+    {
+      "key": "space",
+      "timestampMs": 5007
+    },
+    {
+      "key": "b",
+      "timestampMs": 5165
+    },
+    {
+      "key": "u",
+      "timestampMs": 5225
+    },
+    {
+      "key": "t",
+      "timestampMs": 5347
+    },
+    {
+      "key": "space",
+      "timestampMs": 5451
+    },
+    {
+      "key": "w",
+      "timestampMs": 5633
+    },
+    {
+      "key": "h",
+      "timestampMs": 5719
+    },
+    {
+      "key": "a",
+      "timestampMs": 5786
+    },
+    {
+      "key": "t",
+      "timestampMs": 5861
+    },
+    {
+      "key": "space",
+      "timestampMs": 5924
+    },
+    {
+      "key": "i",
+      "timestampMs": 6079
+    },
+    {
+      "key": "t",
+      "timestampMs": 6214
+    },
+    {
+      "key": "space",
+      "timestampMs": 6353
+    },
+    {
+      "key": "w",
+      "timestampMs": 6494
+    },
+    {
+      "key": "a",
+      "timestampMs": 6592
+    },
+    {
+      "key": "s",
+      "timestampMs": 6689
+    },
+    {
+      "key": "space",
+      "timestampMs": 6787
+    },
+    {
+      "key": "I",
+      "timestampMs": 7286
+    },
+    {
+      "key": "space",
+      "timestampMs": 7344
+    },
+    {
+      "key": "h",
+      "timestampMs": 7759
+    },
+    {
+      "key": "a",
+      "timestampMs": 7866
+    },
+    {
+      "key": "d",
+      "timestampMs": 8166
+    },
+    {
+      "key": "space",
+      "timestampMs": 8286
+    },
+    {
+      "key": "f",
+      "timestampMs": 8577
+    },
+    {
+      "key": "o",
+      "timestampMs": 8692
+    },
+    {
+      "key": "r",
+      "timestampMs": 8777
+    },
+    {
+      "key": "g",
+      "timestampMs": 9155
+    },
+    {
+      "key": "o",
+      "timestampMs": 9197
+    },
+    {
+      "key": "t",
+      "timestampMs": 9327
+    },
+    {
+      "key": "t",
+      "timestampMs": 9472
+    },
+    {
+      "key": "e",
+      "timestampMs": 9578
+    },
+    {
+      "key": "n",
+      "timestampMs": 9703
+    },
+    {
+      "key": "space",
+      "timestampMs": 9765
+    },
+    {
+      "key": "w",
+      "timestampMs": 10101
+    },
+    {
+      "key": "h",
+      "timestampMs": 10240
+    },
+    {
+      "key": "a",
+      "timestampMs": 10458
+    },
+    {
+      "key": "t",
+      "timestampMs": 10595
+    },
+    {
+      "key": "space",
+      "timestampMs": 10657
+    },
+    {
+      "key": "i",
+      "timestampMs": 10838
+    },
+    {
+      "key": "t",
+      "timestampMs": 10956
+    },
+    {
+      "key": "space",
+      "timestampMs": 11045
+    },
+    {
+      "key": "w",
+      "timestampMs": 11171
+    },
+    {
+      "key": "a",
+      "timestampMs": 11290
+    },
+    {
+      "key": "s",
+      "timestampMs": 11390
+    },
+    {
+      "key": "space",
+      "timestampMs": 11517
+    },
+    {
+      "key": "l",
+      "timestampMs": 11884
+    },
+    {
+      "key": "o",
+      "timestampMs": 12035
+    },
+    {
+      "key": "n",
+      "timestampMs": 12175
+    },
+    {
+      "key": "g",
+      "timestampMs": 12255
+    },
+    {
+      "key": "space",
+      "timestampMs": 12346
+    },
+    {
+      "key": "a",
+      "timestampMs": 12524
+    },
+    {
+      "key": "g",
+      "timestampMs": 12686
+    },
+    {
+      "key": "o",
+      "timestampMs": 12771
+    },
+    {
+      "key": "space",
+      "timestampMs": 12864
+    },
+    {
+      "key": "backspace",
+      "timestampMs": 13250
+    },
+    {
+      "key": ".",
+      "timestampMs": 13376
+    },
+    {
+      "key": "space",
+      "timestampMs": 13577
+    },
+    {
+      "key": "I",
+      "timestampMs": 14082
+    },
+    {
+      "key": "backspace",
+      "timestampMs": 14568
+    },
+    {
+      "key": "W",
+      "timestampMs": 14802
+    },
+    {
+      "key": "a",
+      "timestampMs": 15014
+    },
+    {
+      "key": "k",
+      "timestampMs": 15129
+    },
+    {
+      "key": "e",
+      "timestampMs": 15240
+    },
+    {
+      "key": "space",
+      "timestampMs": 15350
+    },
+    {
+      "key": "m",
+      "timestampMs": 15513
+    },
+    {
+      "key": "e",
+      "timestampMs": 15609
+    },
+    {
+      "key": "space",
+      "timestampMs": 15694
+    },
+    {
+      "key": "a",
+      "timestampMs": 15895
+    },
+    {
+      "key": "t",
+      "timestampMs": 16051
+    },
+    {
+      "key": "space",
+      "timestampMs": 16159
+    }
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "audioFile": "clip_0010.wav",
+  "durationMs": 3832,
+  "typedText": ". Our white girlhood",
+  "wordCount": 4,
+  "backspaceSequences": 0,
+  "maxConsecutiveBackspaces": 0,
+  "keystrokes": [
+    {
+      "key": ".",
+      "timestampMs": 0
+    },
+    {
+      "key": "space",
+      "timestampMs": 120
+    },
+    {
+      "key": "O",
+      "timestampMs": 525
+    },
+    {
+      "key": "u",
+      "timestampMs": 691
+    },
+    {
+      "key": "r",
+      "timestampMs": 809
+    },
+    {
+      "key": "space",
+      "timestampMs": 906
+    },
+    {
+      "key": "w",
+      "timestampMs": 1321
+    },
+    {
+      "key": "h",
+      "timestampMs": 1419
+    },
+    {
+      "key": "i",
+      "timestampMs": 1530
+    },
+    {
+      "key": "t",
+      "timestampMs": 1739
+    },
+    {
+      "key": "e",
+      "timestampMs": 1891
+    },
+    {
+      "key": "space",
+      "timestampMs": 2004
+    },
+    {
+      "key": "g",
+      "timestampMs": 2442
+    },
+    {
+      "key": "i",
+      "timestampMs": 2551
+    },
+    {
+      "key": "r",
+      "timestampMs": 2678
+    },
+    {
+      "key": "l",
+      "timestampMs": 2936
+    },
+    {
+      "key": "h",
+      "timestampMs": 3229
+    },
+    {
+      "key": "o",
+      "timestampMs": 3458
+    },
+    {
+      "key": "o",
+      "timestampMs": 3622
+    },
+    {
+      "key": "d",
+      "timestampMs": 3727
+    },
+    {
+      "key": "space",
+      "timestampMs": 3832
+    }
+  ]
+}

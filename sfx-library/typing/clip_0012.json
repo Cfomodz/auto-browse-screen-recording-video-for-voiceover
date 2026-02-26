@@ -1,0 +1,114 @@
+{
+  "audioFile": "clip_0012.wav",
+  "durationMs": 3598,
+  "typedText": "a little heart to heart",
+  "wordCount": 5,
+  "backspaceSequences": 1,
+  "maxConsecutiveBackspaces": 1,
+  "keystrokes": [
+    {
+      "key": "a",
+      "timestampMs": 0
+    },
+    {
+      "key": "space",
+      "timestampMs": 69
+    },
+    {
+      "key": "l",
+      "timestampMs": 265
+    },
+    {
+      "key": "i",
+      "timestampMs": 351
+    },
+    {
+      "key": "t",
+      "timestampMs": 465
+    },
+    {
+      "key": "t",
+      "timestampMs": 614
+    },
+    {
+      "key": "l",
+      "timestampMs": 716
+    },
+    {
+      "key": "e",
+      "timestampMs": 842
+    },
+    {
+      "key": "space",
+      "timestampMs": 934
+    },
+    {
+      "key": "h",
+      "timestampMs": 1177
+    },
+    {
+      "key": "e",
+      "timestampMs": 1261
+    },
+    {
+      "key": "a",
+      "timestampMs": 1345
+    },
+    {
+      "key": "r",
+      "timestampMs": 1478
+    },
+    {
+      "key": "t",
+      "timestampMs": 1755
+    },
+    {
+      "key": "backspace",
+      "timestampMs": 1995
+    },
+    {
+      "key": "t",
+      "timestampMs": 2290
+    },
+    {
+      "key": "space",
+      "timestampMs": 2348
+    },
+    {
+      "key": "t",
+      "timestampMs": 2571
+    },
+    {
+      "key": "o",
+      "timestampMs": 2613
+    },
+    {
+      "key": "space",
+      "timestampMs": 2674
+    },
+    {
+      "key": "h",
+      "timestampMs": 2952
+    },
+    {
+      "key": "e",
+      "timestampMs": 3045
+    },
+    {
+      "key": "a",
+      "timestampMs": 3139
+    },
+    {
+      "key": "r",
+      "timestampMs": 3247
+    },
+    {
+      "key": "t",
+      "timestampMs": 3453
+    },
+    {
+      "key": "space",
+      "timestampMs": 3598
+    }
+  ]
+}

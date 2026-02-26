@@ -1,0 +1,258 @@
+{
+  "audioFile": "clip_0006.wav",
+  "durationMs": 11023,
+  "typedText": "I haven't heard a word. They oughtn't to let here",
+  "wordCount": 10,
+  "backspaceSequences": 3,
+  "maxConsecutiveBackspaces": 4,
+  "keystrokes": [
+    {
+      "key": "I",
+      "timestampMs": 0
+    },
+    {
+      "key": "space",
+      "timestampMs": 85
+    },
+    {
+      "key": "h",
+      "timestampMs": 264
+    },
+    {
+      "key": "a",
+      "timestampMs": 363
+    },
+    {
+      "key": "v",
+      "timestampMs": 538
+    },
+    {
+      "key": "n",
+      "timestampMs": 697
+    },
+    {
+      "key": "'",
+      "timestampMs": 937
+    },
+    {
+      "key": "t",
+      "timestampMs": 1200
+    },
+    {
+      "key": "space",
+      "timestampMs": 1287
+    },
+    {
+      "key": "backspace",
+      "timestampMs": 1775
+    },
+    {
+      "key": "backspace",
+      "timestampMs": 1949
+    },
+    {
+      "key": "backspace",
+      "timestampMs": 2091
+    },
+    {
+      "key": "backspace",
+      "timestampMs": 2424
+    },
+    {
+      "key": "e",
+      "timestampMs": 2581
+    },
+    {
+      "key": "n",
+      "timestampMs": 2714
+    },
+    {
+      "key": "'",
+      "timestampMs": 2930
+    },
+    {
+      "key": "t",
+      "timestampMs": 3047
+    },
+    {
+      "key": "space",
+      "timestampMs": 3142
+    },
+    {
+      "key": "h",
+      "timestampMs": 3446
+    },
+    {
+      "key": "e",
+      "timestampMs": 3507
+    },
+    {
+      "key": "a",
+      "timestampMs": 3610
+    },
+    {
+      "key": "r",
+      "timestampMs": 3704
+    },
+    {
+      "key": "d",
+      "timestampMs": 4009
+    },
+    {
+      "key": "space",
+      "timestampMs": 4327
+    },
+    {
+      "key": "a",
+      "timestampMs": 4510
+    },
+    {
+      "key": "space",
+      "timestampMs": 4593
+    },
+    {
+      "key": "w",
+      "timestampMs": 4757
+    },
+    {
+      "key": "o",
+      "timestampMs": 5022
+    },
+    {
+      "key": "r",
+      "timestampMs": 5133
+    },
+    {
+      "key": "d",
+      "timestampMs": 5312
+    },
+    {
+      "key": ".",
+      "timestampMs": 5470
+    },
+    {
+      "key": "space",
+      "timestampMs": 5562
+    },
+    {
+      "key": "T",
+      "timestampMs": 5769
+    },
+    {
+      "key": "h",
+      "timestampMs": 5885
+    },
+    {
+      "key": "e",
+      "timestampMs": 6008
+    },
+    {
+      "key": "y",
+      "timestampMs": 6069
+    },
+    {
+      "key": "space",
+      "timestampMs": 6347
+    },
+    {
+      "key": "o",
+      "timestampMs": 6789
+    },
+    {
+      "key": "u",
+      "timestampMs": 6929
+    },
+    {
+      "key": "g",
+      "timestampMs": 7067
+    },
+    {
+      "key": "h",
+      "timestampMs": 7207
+    },
+    {
+      "key": "t",
+      "timestampMs": 7373
+    },
+    {
+      "key": "e",
+      "timestampMs": 7695
+    },
+    {
+      "key": "backspace",
+      "timestampMs": 8022
+    },
+    {
+      "key": "n",
+      "timestampMs": 8190
+    },
+    {
+      "key": "'",
+      "timestampMs": 8422
+    },
+    {
+      "key": "t",
+      "timestampMs": 8599
+    },
+    {
+      "key": "space",
+      "timestampMs": 8721
+    },
+    {
+      "key": "t",
+      "timestampMs": 9229
+    },
+    {
+      "key": "o",
+      "timestampMs": 9327
+    },
+    {
+      "key": "space",
+      "timestampMs": 9356
+    },
+    {
+      "key": "l",
+      "timestampMs": 9643
+    },
+    {
+      "key": "e",
+      "timestampMs": 9736
+    },
+    {
+      "key": "t",
+      "timestampMs": 9818
+    },
+    {
+      "key": "space",
+      "timestampMs": 9902
+    },
+    {
+      "key": "u",
+      "timestampMs": 10193
+    },
+    {
+      "key": "backspace",
+      "timestampMs": 10408
+    },
+    {
+      "key": "h",
+      "timestampMs": 10587
+    },
+    {
+      "key": "e",
+      "timestampMs": 10675
+    },
+    {
+      "key": "r",
+      "timestampMs": 10758
+    },
+    {
+      "key": "e",
+      "timestampMs": 10893
+    },
+    {
+      "key": "space",
+      "timestampMs": 11023
+    }
+  ]
+}

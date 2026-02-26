@@ -1,0 +1,186 @@
+{
+  "audioFile": "clip_0008.wav",
+  "durationMs": 5836,
+  "typedText": "she's going to spend lots of weekends out",
+  "wordCount": 8,
+  "backspaceSequences": 1,
+  "maxConsecutiveBackspaces": 1,
+  "keystrokes": [
+    {
+      "key": "space",
+      "timestampMs": 0
+    },
+    {
+      "key": "s",
+      "timestampMs": 194
+    },
+    {
+      "key": "h",
+      "timestampMs": 297
+    },
+    {
+      "key": "e",
+      "timestampMs": 438
+    },
+    {
+      "key": "'",
+      "timestampMs": 603
+    },
+    {
+      "key": "s",
+      "timestampMs": 767
+    },
+    {
+      "key": "space",
+      "timestampMs": 870
+    },
+    {
+      "key": "g",
+      "timestampMs": 1063
+    },
+    {
+      "key": "o",
+      "timestampMs": 1111
+    },
+    {
+      "key": "i",
+      "timestampMs": 1257
+    },
+    {
+      "key": "n",
+      "timestampMs": 1356
+    },
+    {
+      "key": "g",
+      "timestampMs": 1421
+    },
+    {
+      "key": "space",
+      "timestampMs": 1529
+    },
+    {
+      "key": "t",
+      "timestampMs": 1650
+    },
+    {
+      "key": "o",
+      "timestampMs": 1711
+    },
+    {
+      "key": "space",
+      "timestampMs": 1768
+    },
+    {
+      "key": "b",
+      "timestampMs": 1942
+    },
+    {
+      "key": "backspace",
+      "timestampMs": 2146
+    },
+    {
+      "key": "s",
+      "timestampMs": 2242
+    },
+    {
+      "key": "p",
+      "timestampMs": 2383
+    },
+    {
+      "key": "e",
+      "timestampMs": 2503
+    },
+    {
+      "key": "n",
+      "timestampMs": 2635
+    },
+    {
+      "key": "d",
+      "timestampMs": 2750
+    },
+    {
+      "key": "space",
+      "timestampMs": 2857
+    },
+    {
+      "key": "l",
+      "timestampMs": 3111
+    },
+    {
+      "key": "o",
+      "timestampMs": 3270
+    },
+    {
+      "key": "t",
+      "timestampMs": 3429
+    },
+    {
+      "key": "s",
+      "timestampMs": 3569
+    },
+    {
+      "key": "space",
+      "timestampMs": 3675
+    },
+    {
+      "key": "o",
+      "timestampMs": 3808
+    },
+    {
+      "key": "f",
+      "timestampMs": 3873
+    },
+    {
+      "key": "space",
+      "timestampMs": 3947
+    },
+    {
+      "key": "w",
+      "timestampMs": 4089
+    },
+    {
+      "key": "e",
+      "timestampMs": 4234
+    },
+    {
+      "key": "e",
+      "timestampMs": 4385
+    },
+    {
+      "key": "k",
+      "timestampMs": 4485
+    },
+    {
+      "key": "e",
+      "timestampMs": 4937
+    },
+    {
+      "key": "n",
+      "timestampMs": 5112
+    },
+    {
+      "key": "d",
+      "timestampMs": 5244
+    },
+    {
+      "key": "s",
+      "timestampMs": 5393
+    },
+    {
+      "key": "space",
+      "timestampMs": 5478
+    },
+    {
+      "key": "o",
+      "timestampMs": 5621
+    },
+    {
+      "key": "u",
+      "timestampMs": 5727
+    },
+    {
+      "key": "t",
+      "timestampMs": 5836
+    }
+  ]
+}

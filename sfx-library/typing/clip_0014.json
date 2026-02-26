@@ -1,0 +1,18 @@
+{
+  "audioFile": "clip_0014.wav",
+  "durationMs": 66,
+  "typedText": "k",
+  "wordCount": 1,
+  "backspaceSequences": 0,
+  "maxConsecutiveBackspaces": 0,
+  "keystrokes": [
+    {
+      "key": "k",
+      "timestampMs": 0
+    },
+    {
+      "key": "space",
+      "timestampMs": 66
+    }
+  ]
+}

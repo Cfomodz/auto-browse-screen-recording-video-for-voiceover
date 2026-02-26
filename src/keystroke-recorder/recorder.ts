@@ -133,10 +133,8 @@ export class KeystrokeRecorder extends EventEmitter {
     }
 
     const useDir = options?.outputDir ?? this.outputDir;
-    const baseName = options?.baseName ?? `clip_${String(++this.clipCounter).padStart(4, '0')}`;
-    if (!options?.outputDir) {
-      this.clipCounter = parseInt(baseName.replace(/\D/g, ''), 10) || this.clipCounter;
-    }
+    const baseName =
+      options?.baseName ?? `clip_${String(++this.clipCounter).padStart(4, '0')}`;
     this.currentClipDir = useDir;
     this.currentClipBaseName = baseName;
     const audioPath = path.join(useDir, `${baseName}.${this.audioFormat}`);

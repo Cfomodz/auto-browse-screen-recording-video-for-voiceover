@@ -182,19 +182,35 @@ program
   .option('-b, --backend <backend>', 'Audio capture backend: ffmpeg, arecord, or sox', 'ffmpeg')
   .option('-r, --sample-rate <rate>', 'Audio sample rate', '44100')
   .option('-f, --format <format>', 'Audio format: wav or flac', 'wav')
-  .option('--fill-gaps', 'Guided mode: analyze library coverage and prompt for missing patterns')
+  .option('--fill-gaps', 'Guided mode: prompt for specific missing patterns (old flow)')
+  .option('--interactive', 'Legacy: Ctrl+R/Ctrl+S per clip instead of one free-form session')
   .option('--script <path>', 'Path to a script/transcript to check pattern coverage against')
+  .option('--target-lufs <dB>', 'Loudness target for extracted clips (default -14; use -12 for louder)', '-14')
+  .option('-c, --config <path>', 'Pipeline config path (default: config.json or broll-config.json in cwd)')
   .action(async (opts) => {
     try {
       const { KeystrokeRecorder } = await import('./keystroke-recorder/recorder');
-      const outDir = path.resolve(opts.output);
+      let outDir = path.resolve(opts.output);
+      let targetLUFSFromConfig: number | undefined = undefined;
+      const configPath = opts.config ? path.resolve(opts.config) : getDefaultConfigPath();
+      if (configPath && fs.existsSync(configPath)) {
+        const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        const cfg = resolveConfig(raw, path.dirname(configPath));
+        if (cfg.sfx?.keyboardTyping?.targetLUFS != null) {
+          targetLUFSFromConfig = cfg.sfx.keyboardTyping.targetLUFS;
+        }
+        if (cfg.sfx?.libraryPath && cfg.sfx?.keyboardTyping?.samplesDir) {
+          outDir = path.resolve(path.dirname(configPath), cfg.sfx.libraryPath, cfg.sfx.keyboardTyping.samplesDir);
+        }
+      }
+      const logger = createLogger('Recorder');
 
       const recorder = new KeystrokeRecorder({
         outputDir: outDir,
         sampleRate: parseInt(opts.sampleRate, 10),
         audioFormat: opts.format,
         audioBackend: opts.backend,
-        logger: createLogger('Recorder'),
+        logger,
       });
 
       if (opts.fillGaps) {
@@ -223,10 +239,8 @@ program
           console.log('Already at 90%+ coverage. Remaining gaps are optional.\n');
         }
 
-        // Walk the user through each gap
         const clips = await recorder.runGuidedSession(prompts);
 
-        // Show updated coverage
         const updatedAnalyzer = new CoverageAnalyzer(outDir, createLogger('Coverage'));
         const updatedReport = updatedAnalyzer.analyze(scriptText);
         console.log(`\n=== Updated Coverage: ${updatedReport.coveragePercent.toFixed(1)}% ===`);
@@ -238,8 +252,8 @@ program
           console.log(`${(90 - updatedReport.coveragePercent).toFixed(1)}% more needed to reach 90% target.`);
           console.log('Run again with --fill-gaps to continue filling gaps.');
         }
-      } else {
-        // Free-form recording mode
+      } else if (opts.interactive) {
+        // Legacy: multiple clips with Ctrl+R / Ctrl+S
         const clips = await recorder.runInteractiveSession();
 
         console.log(`\n=== Session Summary ===`);
@@ -253,19 +267,116 @@ program
           );
         }
 
-        // Always show current coverage after recording
         const { CoverageAnalyzer } = await import('./keystroke-recorder/coverage');
         const analyzer = new CoverageAnalyzer(outDir, createLogger('Coverage'));
         const report = analyzer.analyze();
         console.log(`\nLibrary coverage: ${report.coveragePercent.toFixed(1)}% (${report.coveredPatterns}/${report.totalPatterns} patterns)`);
+      } else {
+        // Default: free-form — type naturally, then we extract coverage clips
+        const result = await recorder.runFreeFormSession();
+        if (!result) {
+          console.log('No session recorded.');
+          return;
+        }
+
+        console.log(`\nSession saved. Extracting clips for coverage gaps...`);
+        const { extractClipsFromSession } = await import('./keystroke-recorder/extract-clips');
+        const scriptText = opts.script
+          ? fs.readFileSync(path.resolve(opts.script), 'utf-8')
+          : undefined;
+        const targetLUFS = targetLUFSFromConfig ?? parseFloat(opts.targetLufs ?? process.env.TYPING_TARGET_LUFS ?? '-14');
+        const extracted = extractClipsFromSession(
+          result.sessionJsonPath,
+          outDir,
+          createLogger('Extract'),
+          { scriptText, targetLUFS: Number.isFinite(targetLUFS) ? targetLUFS : -14 }
+        );
+        console.log(`Extracted ${extracted} clip(s) from session.`);
+
+        const { CoverageAnalyzer } = await import('./keystroke-recorder/coverage');
+        const analyzer = new CoverageAnalyzer(outDir, createLogger('Coverage'));
+        const report = analyzer.analyze(scriptText);
+        console.log(`\nLibrary coverage: ${report.coveragePercent.toFixed(1)}% (${report.coveredPatterns}/${report.totalPatterns} patterns, ${report.totalClips} clips)`);
         if (report.coveragePercent < 90) {
-          console.log(`Run with --fill-gaps to see what patterns are missing.`);
+          console.log('Record more natural typing and run again to fill gaps.');
         }
       }
 
       console.log(`\nClips saved to: ${outDir}`);
     } catch (err) {
       logger.error(`Recording session failed: ${err}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('extract-typing [sessionNumber]')
+  .description('Re-slice a session into clips (e.g. after adding volume normalization). Use session number like 1 for session_001.')
+  .option('-o, --output <dir>', 'Typing clips library directory', './sfx-library/typing')
+  .option('--all', 'Extract every segment (for re-slice with new settings); default only extracts for uncovered patterns')
+  .option('--script <path>', 'Path to a script/transcript to check coverage against')
+  .option('--target-lufs <dB>', 'Loudness target in LUFS (default -14; use -12 for louder)', '-14')
+  .option('-c, --config <path>', 'Pipeline config path (default: config.json or broll-config.json in cwd)')
+  .action(async (sessionNumber, opts) => {
+    try {
+      let outDir = path.resolve(opts.output);
+      let targetLUFSFromConfig: number | undefined = undefined;
+      const configPath = opts.config ? path.resolve(opts.config) : getDefaultConfigPath();
+      if (configPath && fs.existsSync(configPath)) {
+        const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        const cfg = resolveConfig(raw, path.dirname(configPath));
+        if (cfg.sfx?.keyboardTyping?.targetLUFS != null) {
+          targetLUFSFromConfig = cfg.sfx.keyboardTyping.targetLUFS;
+        }
+        if (cfg.sfx?.libraryPath && cfg.sfx?.keyboardTyping?.samplesDir) {
+          outDir = path.resolve(path.dirname(configPath), cfg.sfx.libraryPath, cfg.sfx.keyboardTyping.samplesDir);
+        }
+      }
+      const sessionsDir = path.join(outDir, 'sessions');
+
+      if (!fs.existsSync(sessionsDir)) {
+        console.log('No sessions directory found. Record with record-typing first.');
+        return;
+      }
+
+      let sessionNum: number;
+      if (sessionNumber !== undefined && sessionNumber !== null) {
+        sessionNum = parseInt(String(sessionNumber), 10);
+        if (!Number.isFinite(sessionNum) || sessionNum < 1) {
+          console.log('Session number must be a positive integer (e.g. 1 for session_001).');
+          return;
+        }
+      } else {
+        const names = fs.readdirSync(sessionsDir).filter((f) => f.match(/^session_(\d+)\.json$/));
+        if (names.length === 0) {
+          console.log('No session JSON files in sessions/. Record with record-typing first.');
+          return;
+        }
+        const nums = names.map((f) => parseInt(f.replace(/^session_(\d+)\.json$/, '$1'), 10));
+        sessionNum = Math.max(...nums);
+        console.log(`Using latest session: ${sessionNum}`);
+      }
+
+      const sessionJson = path.join(sessionsDir, `session_${String(sessionNum).padStart(3, '0')}.json`);
+      if (!fs.existsSync(sessionJson)) {
+        console.log('Session not found: %s', sessionJson);
+        return;
+      }
+
+      const scriptText = opts.script
+        ? fs.readFileSync(path.resolve(opts.script), 'utf-8')
+        : undefined;
+      const targetLUFS = targetLUFSFromConfig ?? parseFloat(opts.targetLufs ?? process.env.TYPING_TARGET_LUFS ?? '-14');
+      const { extractClipsFromSession } = await import('./keystroke-recorder/extract-clips');
+      const extracted = extractClipsFromSession(
+        sessionJson,
+        outDir,
+        createLogger('Extract'),
+        { scriptText, extractAll: opts.all, targetLUFS: Number.isFinite(targetLUFS) ? targetLUFS : -14 }
+      );
+      console.log(`Extracted ${extracted} clip(s) from session ${sessionNum}.`);
+    } catch (err) {
+      logger.error(`Extract failed: ${err}`);
       process.exit(1);
     }
   });
@@ -348,6 +459,16 @@ function resolveConfig(raw: PipelineConfig, baseDir: string): PipelineConfig {
     audioPath: path.resolve(baseDir, raw.audioPath),
     outputDir: path.resolve(baseDir, raw.outputDir),
   };
+}
+
+/** Default config path: try config.json then broll-config.json in cwd. */
+function getDefaultConfigPath(): string | null {
+  const cwd = process.cwd();
+  for (const name of ['config.json', 'broll-config.json']) {
+    const p = path.join(cwd, name);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
 }
 
 program.parse();

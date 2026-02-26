@@ -32,7 +32,8 @@
     },
     "keyboardTyping": {
       "enabled": true,
-      "samplesDir": "typing"
+      "samplesDir": "typing",
+      "targetLUFS": -10
     }
   },
   "camera": {

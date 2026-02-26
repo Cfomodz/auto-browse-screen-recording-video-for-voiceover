@@ -1,0 +1,114 @@
+{
+  "audioFile": "clip_0001.wav",
+  "durationMs": 4010,
+  "typedText": "hot springs and palm beach",
+  "wordCount": 5,
+  "backspaceSequences": 0,
+  "maxConsecutiveBackspaces": 0,
+  "keystrokes": [
+    {
+      "key": "h",
+      "timestampMs": 0
+    },
+    {
+      "key": "o",
+      "timestampMs": 166
+    },
+    {
+      "key": "t",
+      "timestampMs": 290
+    },
+    {
+      "key": "space",
+      "timestampMs": 384
+    },
+    {
+      "key": "s",
+      "timestampMs": 526
+    },
+    {
+      "key": "p",
+      "timestampMs": 668
+    },
+    {
+      "key": "r",
+      "timestampMs": 850
+    },
+    {
+      "key": "i",
+      "timestampMs": 947
+    },
+    {
+      "key": "n",
+      "timestampMs": 1067
+    },
+    {
+      "key": "g",
+      "timestampMs": 1181
+    },
+    {
+      "key": "s",
+      "timestampMs": 1361
+    },
+    {
+      "key": "space",
+      "timestampMs": 1483
+    },
+    {
+      "key": "a",
+      "timestampMs": 1662
+    },
+    {
+      "key": "n",
+      "timestampMs": 1770
+    },
+    {
+      "key": "d",
+      "timestampMs": 1862
+    },
+    {
+      "key": "space",
+      "timestampMs": 1963
+    },
+    {
+      "key": "p",
+      "timestampMs": 2572
+    },
+    {
+      "key": "a",
+      "timestampMs": 2696
+    },
+    {
+      "key": "l",
+      "timestampMs": 2802
+    },
+    {
+      "key": "m",
+      "timestampMs": 3009
+    },
+    {
+      "key": "space",
+      "timestampMs": 3123
+    },
+    {
+      "key": "b",
+      "timestampMs": 3431
+    },
+    {
+      "key": "e",
+      "timestampMs": 3572
+    },
+    {
+      "key": "a",
+      "timestampMs": 3670
+    },
+    {
+      "key": "c",
+      "timestampMs": 3893
+    },
+    {
+      "key": "h",
+      "timestampMs": 4010
+    }
+  ]
+}

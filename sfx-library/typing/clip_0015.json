@@ -1,0 +1,218 @@
+{
+  "audioFile": "clip_0015.wav",
+  "durationMs": 8468,
+  "typedText": "crept up on us and I said lightly that I had heard n",
+  "wordCount": 13,
+  "backspaceSequences": 0,
+  "maxConsecutiveBackspaces": 0,
+  "keystrokes": [
+    {
+      "key": "c",
+      "timestampMs": 0
+    },
+    {
+      "key": "r",
+      "timestampMs": 429
+    },
+    {
+      "key": "e",
+      "timestampMs": 606
+    },
+    {
+      "key": "p",
+      "timestampMs": 944
+    },
+    {
+      "key": "t",
+      "timestampMs": 1106
+    },
+    {
+      "key": "space",
+      "timestampMs": 1304
+    },
+    {
+      "key": "u",
+      "timestampMs": 1605
+    },
+    {
+      "key": "p",
+      "timestampMs": 1770
+    },
+    {
+      "key": "space",
+      "timestampMs": 1863
+    },
+    {
+      "key": "o",
+      "timestampMs": 2037
+    },
+    {
+      "key": "n",
+      "timestampMs": 2200
+    },
+    {
+      "key": "space",
+      "timestampMs": 2277
+    },
+    {
+      "key": "u",
+      "timestampMs": 2494
+    },
+    {
+      "key": "s",
+      "timestampMs": 2637
+    },
+    {
+      "key": "space",
+      "timestampMs": 2743
+    },
+    {
+      "key": "a",
+      "timestampMs": 2931
+    },
+    {
+      "key": "n",
+      "timestampMs": 3017
+    },
+    {
+      "key": "d",
+      "timestampMs": 3110
+    },
+    {
+      "key": "space",
+      "timestampMs": 3206
+    },
+    {
+      "key": "I",
+      "timestampMs": 3904
+    },
+    {
+      "key": "space",
+      "timestampMs": 3962
+    },
+    {
+      "key": "s",
+      "timestampMs": 4250
+    },
+    {
+      "key": "a",
+      "timestampMs": 4356
+    },
+    {
+      "key": "i",
+      "timestampMs": 4496
+    },
+    {
+      "key": "d",
+      "timestampMs": 4601
+    },
+    {
+      "key": "space",
+      "timestampMs": 4732
+    },
+    {
+      "key": "l",
+      "timestampMs": 4923
+    },
+    {
+      "key": "i",
+      "timestampMs": 5028
+    },
+    {
+      "key": "g",
+      "timestampMs": 5204
+    },
+    {
+      "key": "h",
+      "timestampMs": 5296
+    },
+    {
+      "key": "t",
+      "timestampMs": 5398
+    },
+    {
+      "key": "l",
+      "timestampMs": 5539
+    },
+    {
+      "key": "y",
+      "timestampMs": 5661
+    },
+    {
+      "key": "space",
+      "timestampMs": 5756
+    },
+    {
+      "key": "t",
+      "timestampMs": 5887
+    },
+    {
+      "key": "h",
+      "timestampMs": 5961
+    },
+    {
+      "key": "a",
+      "timestampMs": 6095
+    },
+    {
+      "key": "t",
+      "timestampMs": 6152
+    },
+    {
+      "key": "space",
+      "timestampMs": 6216
+    },
+    {
+      "key": "I",
+      "timestampMs": 6428
+    },
+    {
+      "key": "space",
+      "timestampMs": 6473
+    },
+    {
+      "key": "h",
+      "timestampMs": 6649
+    },
+    {
+      "key": "a",
+      "timestampMs": 6799
+    },
+    {
+      "key": "d",
+      "timestampMs": 6921
+    },
+    {
+      "key": "space",
+      "timestampMs": 7040
+    },
+    {
+      "key": "h",
+      "timestampMs": 7393
+    },
+    {
+      "key": "e",
+      "timestampMs": 7451
+    },
+    {
+      "key": "a",
+      "timestampMs": 7539
+    },
+    {
+      "key": "r",
+      "timestampMs": 7682
+    },
+    {
+      "key": "d",
+      "timestampMs": 7869
+    },
+    {
+      "key": "space",
+      "timestampMs": 8104
+    },
+    {
+      "key": "n",
+      "timestampMs": 8468
+    }
+  ]
+}

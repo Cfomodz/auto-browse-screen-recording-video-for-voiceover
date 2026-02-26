@@ -1,0 +1,126 @@
+{
+  "audioFile": "clip_0005.wav",
+  "durationMs": 4326,
+  "typedText": "and I'll push you in a boat.",
+  "wordCount": 7,
+  "backspaceSequences": 0,
+  "maxConsecutiveBackspaces": 0,
+  "keystrokes": [
+    {
+      "key": "a",
+      "timestampMs": 0
+    },
+    {
+      "key": "n",
+      "timestampMs": 98
+    },
+    {
+      "key": "d",
+      "timestampMs": 164
+    },
+    {
+      "key": "space",
+      "timestampMs": 269
+    },
+    {
+      "key": "I",
+      "timestampMs": 523
+    },
+    {
+      "key": "'",
+      "timestampMs": 751
+    },
+    {
+      "key": "l",
+      "timestampMs": 1150
+    },
+    {
+      "key": "l",
+      "timestampMs": 1302
+    },
+    {
+      "key": "space",
+      "timestampMs": 1408
+    },
+    {
+      "key": "p",
+      "timestampMs": 1787
+    },
+    {
+      "key": "u",
+      "timestampMs": 1944
+    },
+    {
+      "key": "s",
+      "timestampMs": 2075
+    },
+    {
+      "key": "h",
+      "timestampMs": 2185
+    },
+    {
+      "key": "space",
+      "timestampMs": 2275
+    },
+    {
+      "key": "y",
+      "timestampMs": 2449
+    },
+    {
+      "key": "o",
+      "timestampMs": 2506
+    },
+    {
+      "key": "u",
+      "timestampMs": 2581
+    },
+    {
+      "key": "space",
+      "timestampMs": 2660
+    },
+    {
+      "key": "i",
+      "timestampMs": 2859
+    },
+    {
+      "key": "n",
+      "timestampMs": 2969
+    },
+    {
+      "key": "space",
+      "timestampMs": 3047
+    },
+    {
+      "key": "a",
+      "timestampMs": 3138
+    },
+    {
+      "key": "space",
+      "timestampMs": 3229
+    },
+    {
+      "key": "b",
+      "timestampMs": 3409
+    },
+    {
+      "key": "o",
+      "timestampMs": 3559
+    },
+    {
+      "key": "a",
+      "timestampMs": 3647
+    },
+    {
+      "key": "t",
+      "timestampMs": 3758
+    },
+    {
+      "key": ".",
+      "timestampMs": 4236
+    },
+    {
+      "key": "space",
+      "timestampMs": 4326
+    }
+  ]
+}

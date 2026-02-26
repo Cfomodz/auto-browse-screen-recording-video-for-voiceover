@@ -1,0 +1,62 @@
+{
+  "audioFile": "clip_0013.wav",
+  "durationMs": 1983,
+  "typedText": "on the nordic",
+  "wordCount": 3,
+  "backspaceSequences": 0,
+  "maxConsecutiveBackspaces": 0,
+  "keystrokes": [
+    {
+      "key": "o",
+      "timestampMs": 0
+    },
+    {
+      "key": "n",
+      "timestampMs": 153
+    },
+    {
+      "key": "space",
+      "timestampMs": 221
+    },
+    {
+      "key": "t",
+      "timestampMs": 427
+    },
+    {
+      "key": "h",
+      "timestampMs": 514
+    },
+    {
+      "key": "e",
+      "timestampMs": 610
+    },
+    {
+      "key": "space",
+      "timestampMs": 670
+    },
+    {
+      "key": "n",
+      "timestampMs": 1349
+    },
+    {
+      "key": "o",
+      "timestampMs": 1493
+    },
+    {
+      "key": "r",
+      "timestampMs": 1589
+    },
+    {
+      "key": "d",
+      "timestampMs": 1753
+    },
+    {
+      "key": "i",
+      "timestampMs": 1864
+    },
+    {
+      "key": "c",
+      "timestampMs": 1983
+    }
+  ]
+}

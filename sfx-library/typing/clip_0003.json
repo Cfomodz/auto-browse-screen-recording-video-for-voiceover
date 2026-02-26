@@ -1,0 +1,114 @@
+{
+  "audioFile": "clip_0003.wav",
+  "durationMs": 4177,
+  "typedText": "Wake me at 8. Come over ot",
+  "wordCount": 7,
+  "backspaceSequences": 0,
+  "maxConsecutiveBackspaces": 0,
+  "keystrokes": [
+    {
+      "key": "W",
+      "timestampMs": 0
+    },
+    {
+      "key": "a",
+      "timestampMs": 205
+    },
+    {
+      "key": "k",
+      "timestampMs": 323
+    },
+    {
+      "key": "e",
+      "timestampMs": 393
+    },
+    {
+      "key": "space",
+      "timestampMs": 506
+    },
+    {
+      "key": "m",
+      "timestampMs": 664
+    },
+    {
+      "key": "e",
+      "timestampMs": 738
+    },
+    {
+      "key": "space",
+      "timestampMs": 832
+    },
+    {
+      "key": "a",
+      "timestampMs": 1028
+    },
+    {
+      "key": "t",
+      "timestampMs": 1183
+    },
+    {
+      "key": "space",
+      "timestampMs": 1265
+    },
+    {
+      "key": "8",
+      "timestampMs": 1615
+    },
+    {
+      "key": ".",
+      "timestampMs": 2132
+    },
+    {
+      "key": "space",
+      "timestampMs": 2219
+    },
+    {
+      "key": "C",
+      "timestampMs": 2443
+    },
+    {
+      "key": "o",
+      "timestampMs": 2630
+    },
+    {
+      "key": "m",
+      "timestampMs": 2785
+    },
+    {
+      "key": "e",
+      "timestampMs": 2869
+    },
+    {
+      "key": "space",
+      "timestampMs": 2958
+    },
+    {
+      "key": "o",
+      "timestampMs": 3116
+    },
+    {
+      "key": "v",
+      "timestampMs": 3228
+    },
+    {
+      "key": "e",
+      "timestampMs": 3395
+    },
+    {
+      "key": "r",
+      "timestampMs": 3480
+    },
+    {
+      "key": "space",
+      "timestampMs": 3575
+    },
+    {
+      "key": "o",
+      "timestampMs": 3791
+    },
+    {
+      "key": "t",
+      "timestampMs": 4177
+    }
+  ]
+}

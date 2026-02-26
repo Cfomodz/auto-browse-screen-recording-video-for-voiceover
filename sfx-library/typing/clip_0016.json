@@ -1,0 +1,62 @@
+{
+  "audioFile": "clip_0016.wav",
+  "durationMs": 1383,
+  "typedText": "othing at all",
+  "wordCount": 3,
+  "backspaceSequences": 0,
+  "maxConsecutiveBackspaces": 0,
+  "keystrokes": [
+    {
+      "key": "o",
+      "timestampMs": 0
+    },
+    {
+      "key": "t",
+      "timestampMs": 135
+    },
+    {
+      "key": "h",
+      "timestampMs": 231
+    },
+    {
+      "key": "i",
+      "timestampMs": 370
+    },
+    {
+      "key": "n",
+      "timestampMs": 474
+    },
+    {
+      "key": "g",
+      "timestampMs": 552
+    },
+    {
+      "key": "space",
+      "timestampMs": 663
+    },
+    {
+      "key": "a",
+      "timestampMs": 809
+    },
+    {
+      "key": "t",
+      "timestampMs": 927
+    },
+    {
+      "key": "space",
+      "timestampMs": 1010
+    },
+    {
+      "key": "a",
+      "timestampMs": 1136
+    },
+    {
+      "key": "l",
+      "timestampMs": 1240
+    },
+    {
+      "key": "l",
+      "timestampMs": 1383
+    }
+  ]
+}
