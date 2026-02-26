@@ -1,7 +1,19 @@
 import { Page } from 'puppeteer-core';
-import { ExtractedTopic, ModuleActionType, ModuleConfig, RecordedSegment } from './types';
+import { ExtractedTopic, ModuleActionType, ModuleConfig, ZoomKeyframe, SfxEvent } from './types';
 import { BrowserEngine } from '../browser/engine';
 import { Logger } from '../utils/logger';
+
+/**
+ * Result returned by a module's execute() method.
+ */
+export interface ModuleExecuteResult {
+  /** How long the browser action took, in seconds. */
+  durationSeconds: number;
+  /** Zoom keyframes describing the camera journey during this action. */
+  zoomKeyframes: ZoomKeyframe[];
+  /** SFX events collected during this action. */
+  sfxEvents: SfxEvent[];
+}
 
 /**
  * Base class for all B-roll action modules.
@@ -35,13 +47,13 @@ export abstract class BrollModule {
    * @param page      - Puppeteer page to operate on
    * @param browser   - Browser engine for mouse animation helpers
    * @param topic     - The topic/concept to act on
-   * @returns duration in seconds that the action took
+   * @returns Execution result with duration, zoom keyframes, and SFX events
    */
   abstract execute(
     page: Page,
     browser: BrowserEngine,
     topic: ExtractedTopic
-  ): Promise<number>;
+  ): Promise<ModuleExecuteResult>;
 }
 
 /**

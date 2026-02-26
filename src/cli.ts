@@ -140,6 +140,32 @@ program
         resolution: { width: 1920, height: 1080 },
         format: 'mp4',
       },
+      sfx: {
+        enabled: false,
+        libraryPath: './sfx-library',
+        volume: 0.4,
+        mouseClick: {
+          enabled: true,
+          samplesDir: 'clicks',
+        },
+        keyboardTyping: {
+          enabled: true,
+          samplesDir: 'typing',
+        },
+      },
+      camera: {
+        enabled: true,
+        maxZoom: 1.4,
+        transitionMs: 800,
+        easing: 'ease-in-out',
+      },
+      typing: {
+        baseDelayMs: 80,
+        inconsistency: 0.35,
+        mistakeProbability: 0.08,
+        maxMistakeLength: 2,
+        thinkPause: { minMs: 100, maxMs: 300 },
+      },
     };
 
     const outPath = path.resolve(opts.output);
@@ -147,6 +173,45 @@ program
     logger.info(`Config template written to: ${outPath}`);
     logger.info('Edit the config with your API keys and file paths, then run:');
     logger.info('  auto-broll run --config ./broll-config.json');
+  });
+
+program
+  .command('record-typing')
+  .description('Record typing audio with keystroke logging for the SFX library')
+  .requiredOption('-o, --output <dir>', 'Output directory for audio clips + metadata')
+  .option('-b, --backend <backend>', 'Audio capture backend: ffmpeg, arecord, or sox', 'ffmpeg')
+  .option('-r, --sample-rate <rate>', 'Audio sample rate', '44100')
+  .option('-f, --format <format>', 'Audio format: wav or flac', 'wav')
+  .action(async (opts) => {
+    try {
+      const { KeystrokeRecorder } = await import('./keystroke-recorder/recorder');
+
+      const recorder = new KeystrokeRecorder({
+        outputDir: path.resolve(opts.output),
+        sampleRate: parseInt(opts.sampleRate, 10),
+        audioFormat: opts.format,
+        audioBackend: opts.backend,
+        logger: createLogger('Recorder'),
+      });
+
+      const clips = await recorder.runInteractiveSession();
+
+      console.log(`\n=== Session Summary ===`);
+      console.log(`Recorded ${clips.length} typing clips.`);
+      for (const clip of clips) {
+        console.log(
+          `  ${clip.audioFile}: ${clip.wordCount} words, ` +
+          `${clip.keystrokes.length} keystrokes, ` +
+          `${clip.backspaceSequences} corrections, ` +
+          `${(clip.durationMs / 1000).toFixed(1)}s`
+        );
+      }
+      console.log(`\nClips saved to: ${path.resolve(opts.output)}`);
+      console.log('Use these as the typing SFX library in your pipeline config.');
+    } catch (err) {
+      logger.error(`Recording session failed: ${err}`);
+      process.exit(1);
+    }
   });
 
 /** Resolve relative paths in config relative to the config file's directory. */

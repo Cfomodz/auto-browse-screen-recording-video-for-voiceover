@@ -5,8 +5,6 @@ import {
   PipelineEvent,
   PipelineResult,
   RecordedSegment,
-  ExtractedTopic,
-  ModuleActionType,
 } from './types';
 import { ModuleRegistry } from './module';
 import { BrowserEngine } from '../browser/engine';
@@ -17,6 +15,7 @@ import { WebSearchModule } from '../modules/web-search';
 import { NewsSearchModule } from '../modules/news-search';
 import { DefinitionSearchModule } from '../modules/definition-search';
 import { ImageSearchModule } from '../modules/image-search';
+import { SfxManager } from '../sfx/manager';
 import { parseTranscript } from '../utils/transcript-parser';
 import { createLogger, Logger } from '../utils/logger';
 
@@ -25,6 +24,10 @@ import { createLogger, Logger } from '../utils/logger';
  *
  * Coordinates the full flow:
  *   transcript -> LLM topic extraction -> browser actions + screen recording -> video assembly
+ *
+ * Now also manages:
+ *   - SFX overlay (click sounds, typing audio)
+ *   - Dynamic camera zoom keyframes per clip
  */
 export class Pipeline extends EventEmitter {
   private config: PipelineConfig;
@@ -34,14 +37,24 @@ export class Pipeline extends EventEmitter {
   private recorder: ScreenRecorder;
   private analyzer: TranscriptAnalyzer;
   private assembler: VideoAssembler;
+  private sfxManager: SfxManager | null = null;
 
   constructor(config: PipelineConfig) {
     super();
     this.config = config;
     this.logger = createLogger('Pipeline');
 
-    // Initialize browser engine
-    this.browser = new BrowserEngine(config, createLogger('Browser'));
+    // Initialize SFX manager if configured
+    if (config.sfx?.enabled) {
+      this.sfxManager = new SfxManager(config.sfx, createLogger('SFX'));
+    }
+
+    // Initialize browser engine (with SFX manager for click/type sounds)
+    this.browser = new BrowserEngine(
+      config,
+      createLogger('Browser'),
+      this.sfxManager ?? undefined
+    );
 
     // Initialize recorder
     this.recorder = new ScreenRecorder(config, createLogger('Recorder'));
@@ -49,7 +62,7 @@ export class Pipeline extends EventEmitter {
     // Initialize LLM analyzer
     this.analyzer = new TranscriptAnalyzer(config, createLogger('Analyzer'));
 
-    // Initialize video assembler
+    // Initialize video assembler (with camera and SFX config)
     this.assembler = new VideoAssembler(config, createLogger('Assembler'));
 
     // Register all enabled modules
@@ -120,8 +133,8 @@ export class Pipeline extends EventEmitter {
           // Start recording
           await this.recorder.startRecording(this.browser.page, clipName);
 
-          // Execute the module's browser action
-          const durationSeconds = await mod.execute(
+          // Execute the module's browser action (now returns full result)
+          const result = await mod.execute(
             this.browser.page,
             this.browser,
             topic
@@ -132,15 +145,17 @@ export class Pipeline extends EventEmitter {
 
           // Determine which time window this clip maps to
           const segStart = topic.segments[0]?.startTime ?? 0;
-          const segEnd = topic.segments[topic.segments.length - 1]?.endTime ?? durationSeconds;
+          const segEnd = topic.segments[topic.segments.length - 1]?.endTime ?? result.durationSeconds;
 
           const recorded: RecordedSegment = {
             topic,
             action: actionType,
             filePath,
-            durationSeconds,
+            durationSeconds: result.durationSeconds,
             startTime: segStart,
             endTime: segEnd,
+            zoomKeyframes: result.zoomKeyframes,
+            sfxEvents: result.sfxEvents,
           };
 
           recordedSegments.push(recorded);
@@ -151,7 +166,7 @@ export class Pipeline extends EventEmitter {
       await this.browser.close();
     }
 
-    // Step 5: Assemble final video
+    // Step 5: Assemble final video (now with zoom and SFX post-processing)
     this.emit_event({ type: 'assembly-start' });
     const outputPath = await this.assembler.assemble(recordedSegments);
     this.emit_event({ type: 'assembly-complete', outputPath });

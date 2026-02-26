@@ -21,5 +21,31 @@
     "fps": 30,
     "resolution": { "width": 1920, "height": 1080 },
     "format": "mp4"
+  },
+  "sfx": {
+    "enabled": false,
+    "libraryPath": "./sfx-library",
+    "volume": 0.4,
+    "mouseClick": {
+      "enabled": true,
+      "samplesDir": "clicks"
+    },
+    "keyboardTyping": {
+      "enabled": true,
+      "samplesDir": "typing"
+    }
+  },
+  "camera": {
+    "enabled": true,
+    "maxZoom": 1.4,
+    "transitionMs": 800,
+    "easing": "ease-in-out"
+  },
+  "typing": {
+    "baseDelayMs": 80,
+    "inconsistency": 0.35,
+    "mistakeProbability": 0.08,
+    "maxMistakeLength": 2,
+    "thinkPause": { "minMs": 100, "maxMs": 300 }
   }
 }

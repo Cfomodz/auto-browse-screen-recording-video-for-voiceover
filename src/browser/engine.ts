@@ -1,6 +1,8 @@
 import puppeteer, { Browser, Page } from 'puppeteer-core';
-import { PipelineConfig } from '../core/types';
+import { PipelineConfig, SfxEvent, ZoomKeyframe } from '../core/types';
 import { MouseAnimator } from './mouse';
+import { TypingAnimator } from './typing-animator';
+import { SfxManager } from '../sfx/manager';
 import { Logger } from '../utils/logger';
 import { humanDelay } from '../utils/timing';
 
@@ -14,12 +16,20 @@ export class BrowserEngine {
   private browser: Browser | null = null;
   private _page: Page | null = null;
   private _mouse: MouseAnimator | null = null;
+  private _typingAnimator: TypingAnimator | null = null;
+  private sfxManager: SfxManager | null = null;
   private config: PipelineConfig;
   private logger: Logger;
 
-  constructor(config: PipelineConfig, logger: Logger) {
+  /** Accumulated SFX events during the current recording clip. */
+  private _clipSfxEvents: SfxEvent[] = [];
+  /** Time tracking for SFX offset calculations. */
+  private _clipStartTime: number = 0;
+
+  constructor(config: PipelineConfig, logger: Logger, sfxManager?: SfxManager) {
     this.config = config;
     this.logger = logger;
+    this.sfxManager = sfxManager ?? null;
   }
 
   get page(): Page {
@@ -30,6 +40,26 @@ export class BrowserEngine {
   get mouse(): MouseAnimator {
     if (!this._mouse) throw new Error('Browser not launched. Call launch() first.');
     return this._mouse;
+  }
+
+  get typingAnimator(): TypingAnimator | null {
+    return this._typingAnimator;
+  }
+
+  /** Start tracking SFX events for a new recording clip. */
+  startClipSfxTracking(): void {
+    this._clipSfxEvents = [];
+    this._clipStartTime = Date.now();
+  }
+
+  /** Get the current time offset into the clip, in seconds. */
+  getClipTimeOffset(): number {
+    return (Date.now() - this._clipStartTime) / 1000;
+  }
+
+  /** Collect all SFX events accumulated during the current clip. */
+  collectClipSfxEvents(): SfxEvent[] {
+    return [...this._clipSfxEvents];
   }
 
   async launch(): Promise<void> {
@@ -64,6 +94,16 @@ export class BrowserEngine {
     });
 
     this._mouse = new MouseAnimator(this._page);
+
+    // Create typing animator if config is provided
+    if (this.config.typing) {
+      this._typingAnimator = new TypingAnimator(
+        this.config.typing,
+        this.logger,
+        this.sfxManager ?? undefined
+      );
+    }
+
     this.logger.info('Browser launched.');
   }
 
@@ -76,6 +116,18 @@ export class BrowserEngine {
 
   /** Type text into the currently focused element with human-like keystroke timing. */
   async humanType(text: string, options?: { minDelay?: number; maxDelay?: number }): Promise<void> {
+    // Use the advanced typing animator if available
+    if (this._typingAnimator) {
+      const result = await this._typingAnimator.type(
+        this.page,
+        text,
+        this.getClipTimeOffset() * 1000
+      );
+      this._clipSfxEvents.push(...result.sfxEvents);
+      return;
+    }
+
+    // Fallback: simple typing with random delay
     const { minDelay = 50, maxDelay = 150 } = options ?? {};
     for (const char of text) {
       await this.page.keyboard.type(char, {
@@ -160,6 +212,13 @@ export class BrowserEngine {
         box.x + box.width / 2,
         box.y + box.height / 2
       );
+
+      // Record click SFX
+      if (this.sfxManager) {
+        const clickSfx = this.sfxManager.getClickSfx(this.getClipTimeOffset());
+        if (clickSfx) this._clipSfxEvents.push(clickSfx);
+      }
+
       return true;
     } catch {
       return false;

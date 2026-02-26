@@ -1,0 +1,249 @@
+import { Page } from 'puppeteer-core';
+import { TypingConfig, SfxEvent, KeystrokeEvent } from '../core/types';
+import { SfxManager } from '../sfx/manager';
+import { delay } from '../utils/timing';
+import { Logger } from '../utils/logger';
+
+/**
+ * Keystroke plan entry — what we're going to type and when.
+ * Built before execution so we can match audio clips to the sequence.
+ */
+interface KeystrokePlan {
+  key: string;
+  delayBeforeMs: number;
+  isMistake: boolean;
+  isCorrection: boolean; // backspace to fix a mistake
+}
+
+/**
+ * Realistic typing animator with Kdenlive-style inconsistency.
+ *
+ * Models the timing patterns of real human typing:
+ * - Base speed with gaussian-distributed variance (the "inconsistency" knob)
+ * - Longer pauses between words (thinking)
+ * - Occasional typos followed by backspace corrections
+ * - Burst speed for familiar short words, slower for unusual words
+ *
+ * When SFX is enabled, coordinates with pre-recorded typing audio clips
+ * to synchronize the visual keystrokes with the audio.
+ */
+export class TypingAnimator {
+  private config: TypingConfig;
+  private sfxManager: SfxManager | null;
+  private logger: Logger;
+
+  constructor(config: TypingConfig, logger: Logger, sfxManager?: SfxManager) {
+    this.config = config;
+    this.logger = logger;
+    this.sfxManager = sfxManager ?? null;
+  }
+
+  /**
+   * Type a string into the current page with realistic animation.
+   *
+   * @param page           Puppeteer page
+   * @param text           Text to type
+   * @param clipTimeOffset Current time offset into the recording clip (for SFX sync)
+   * @returns Object with duration and SFX events generated
+   */
+  async type(
+    page: Page,
+    text: string,
+    clipTimeOffset: number = 0
+  ): Promise<{ durationMs: number; sfxEvents: SfxEvent[] }> {
+    const plan = this.buildKeystrokePlan(text);
+    const sfxEvents: SfxEvent[] = [];
+
+    // If we have typing audio, try to get a matching clip for the text
+    if (this.sfxManager) {
+      const typingSfx = this.sfxManager.buildTypingTimeline(text, clipTimeOffset / 1000);
+      sfxEvents.push(...typingSfx);
+    }
+
+    // Execute the keystroke plan
+    let totalMs = 0;
+    for (const stroke of plan) {
+      await delay(stroke.delayBeforeMs);
+      totalMs += stroke.delayBeforeMs;
+
+      if (stroke.key === 'backspace') {
+        await page.keyboard.press('Backspace');
+      } else {
+        await page.keyboard.type(stroke.key, { delay: 0 });
+      }
+    }
+
+    this.logger.info(
+      `Typed ${text.length} chars in ${(totalMs / 1000).toFixed(1)}s ` +
+      `(${plan.filter((s) => s.isMistake).length} mistakes)`
+    );
+
+    return { durationMs: totalMs, sfxEvents };
+  }
+
+  /**
+   * Build a keystroke plan with realistic timing, mistakes, and corrections.
+   *
+   * The inconsistency parameter works like Kdenlive's typewriter inconsistency:
+   * 0 = perfectly even timing, 1 = highly variable (human-like)
+   */
+  buildKeystrokePlan(text: string): KeystrokePlan[] {
+    const plan: KeystrokePlan[] = [];
+    const words = text.split(/(\s+)/); // Preserve whitespace tokens
+
+    for (let wi = 0; wi < words.length; wi++) {
+      const word = words[wi];
+      const isWhitespace = /^\s+$/.test(word);
+
+      if (isWhitespace) {
+        // Space/whitespace — slight pause
+        plan.push({
+          key: word,
+          delayBeforeMs: this.wordGapDelay(),
+          isMistake: false,
+          isCorrection: false,
+        });
+        continue;
+      }
+
+      // Decide if we make a typo in this word
+      const shouldMistake =
+        word.length > 2 && Math.random() < this.config.mistakeProbability;
+
+      if (shouldMistake) {
+        const mistakeResult = this.planMistake(word);
+        plan.push(...mistakeResult);
+      } else {
+        // Type the word normally, character by character
+        for (let i = 0; i < word.length; i++) {
+          plan.push({
+            key: word[i],
+            delayBeforeMs: this.keystrokeDelay(i === 0 && wi > 0),
+            isMistake: false,
+            isCorrection: false,
+          });
+        }
+      }
+    }
+
+    return plan;
+  }
+
+  /**
+   * Plan a typing mistake: type some correct chars, then wrong chars,
+   * then backspaces, then the correct chars.
+   */
+  private planMistake(word: string): KeystrokePlan[] {
+    const plan: KeystrokePlan[] = [];
+
+    // How far into the word before the mistake
+    const correctPrefix = Math.max(1, Math.floor(Math.random() * (word.length - 1)));
+
+    // Type correct prefix
+    for (let i = 0; i < correctPrefix; i++) {
+      plan.push({
+        key: word[i],
+        delayBeforeMs: this.keystrokeDelay(i === 0),
+        isMistake: false,
+        isCorrection: false,
+      });
+    }
+
+    // Type wrong characters (1 to maxMistakeLength)
+    const mistakeLen = 1 + Math.floor(Math.random() * Math.min(
+      this.config.maxMistakeLength,
+      word.length - correctPrefix
+    ));
+
+    for (let i = 0; i < mistakeLen; i++) {
+      // Pick a random character near the correct one on the keyboard
+      const correctChar = word[correctPrefix + i] || word[correctPrefix];
+      plan.push({
+        key: this.nearbyKey(correctChar),
+        delayBeforeMs: this.keystrokeDelay(false),
+        isMistake: true,
+        isCorrection: false,
+      });
+    }
+
+    // Brief pause — the "oh I made a mistake" moment
+    const pauseMs = 150 + Math.random() * 300;
+
+    // Backspaces to correct — slightly faster than normal typing (rapid correction)
+    for (let i = 0; i < mistakeLen; i++) {
+      plan.push({
+        key: 'backspace',
+        delayBeforeMs: i === 0 ? pauseMs : 40 + Math.random() * 60,
+        isMistake: false,
+        isCorrection: true,
+      });
+    }
+
+    // Type the rest of the word correctly
+    for (let i = correctPrefix; i < word.length; i++) {
+      plan.push({
+        key: word[i],
+        delayBeforeMs: this.keystrokeDelay(false),
+        isMistake: false,
+        isCorrection: false,
+      });
+    }
+
+    return plan;
+  }
+
+  /**
+   * Compute delay before a keystroke with Kdenlive-style inconsistency.
+   *
+   * Uses a gaussian-like distribution centered on baseDelayMs:
+   * - inconsistency=0: always exactly baseDelayMs
+   * - inconsistency=0.5: moderate variation
+   * - inconsistency=1.0: high variation (very human)
+   */
+  private keystrokeDelay(isFirstCharOfWord: boolean): number {
+    const base = this.config.baseDelayMs;
+    const variance = this.config.inconsistency;
+
+    // Box-Muller transform for gaussian random
+    const u1 = Math.random();
+    const u2 = Math.random();
+    const gaussian = Math.sqrt(-2 * Math.log(Math.max(u1, 0.0001))) * Math.cos(2 * Math.PI * u2);
+
+    // Scale the gaussian by inconsistency and base delay
+    const jitter = gaussian * variance * base * 0.5;
+    let ms = base + jitter;
+
+    // First character of a word is slightly slower (finger repositioning)
+    if (isFirstCharOfWord) {
+      ms *= 1.1 + Math.random() * 0.2;
+    }
+
+    // Clamp to reasonable bounds
+    return Math.max(20, Math.min(ms, base * 3));
+  }
+
+  /** Compute the delay between words (thinking/space gap). */
+  private wordGapDelay(): number {
+    const { minMs, maxMs } = this.config.thinkPause;
+    return minMs + Math.random() * (maxMs - minMs);
+  }
+
+  /** Return a key that's physically near the given key on a QWERTY keyboard. */
+  private nearbyKey(char: string): string {
+    const adjacency: Record<string, string> = {
+      q: 'wa', w: 'qeas', e: 'wrds', r: 'etfg', t: 'ryfg',
+      y: 'tuhg', u: 'yijh', i: 'uokj', o: 'iplk', p: 'ol',
+      a: 'qwsz', s: 'awedxz', d: 'serfcx', f: 'drtgvc',
+      g: 'ftyhbv', h: 'gyujnb', j: 'huiknm', k: 'jiolm',
+      l: 'kop', z: 'asx', x: 'zsdc', c: 'xdfv', v: 'cfgb',
+      b: 'vghn', n: 'bhjm', m: 'njk',
+    };
+
+    const lower = char.toLowerCase();
+    const neighbors = adjacency[lower];
+    if (!neighbors) return char;
+
+    const picked = neighbors[Math.floor(Math.random() * neighbors.length)];
+    return char === char.toUpperCase() ? picked.toUpperCase() : picked;
+  }
+}
