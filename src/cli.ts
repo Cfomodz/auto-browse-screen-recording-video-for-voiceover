@@ -178,38 +178,164 @@ program
 program
   .command('record-typing')
   .description('Record typing audio with keystroke logging for the SFX library')
-  .requiredOption('-o, --output <dir>', 'Output directory for audio clips + metadata')
+  .option('-o, --output <dir>', 'Output directory for audio clips + metadata', './sfx-library/typing')
   .option('-b, --backend <backend>', 'Audio capture backend: ffmpeg, arecord, or sox', 'ffmpeg')
   .option('-r, --sample-rate <rate>', 'Audio sample rate', '44100')
   .option('-f, --format <format>', 'Audio format: wav or flac', 'wav')
+  .option('--fill-gaps', 'Guided mode: analyze library coverage and prompt for missing patterns')
+  .option('--script <path>', 'Path to a script/transcript to check pattern coverage against')
   .action(async (opts) => {
     try {
       const { KeystrokeRecorder } = await import('./keystroke-recorder/recorder');
+      const outDir = path.resolve(opts.output);
 
       const recorder = new KeystrokeRecorder({
-        outputDir: path.resolve(opts.output),
+        outputDir: outDir,
         sampleRate: parseInt(opts.sampleRate, 10),
         audioFormat: opts.format,
         audioBackend: opts.backend,
         logger: createLogger('Recorder'),
       });
 
-      const clips = await recorder.runInteractiveSession();
+      if (opts.fillGaps) {
+        // Guided recording mode — analyze gaps and prompt for each
+        const { CoverageAnalyzer } = await import('./keystroke-recorder/coverage');
+        const scriptText = opts.script
+          ? fs.readFileSync(path.resolve(opts.script), 'utf-8')
+          : undefined;
 
-      console.log(`\n=== Session Summary ===`);
-      console.log(`Recorded ${clips.length} typing clips.`);
-      for (const clip of clips) {
-        console.log(
-          `  ${clip.audioFile}: ${clip.wordCount} words, ` +
-          `${clip.keystrokes.length} keystrokes, ` +
-          `${clip.backspaceSequences} corrections, ` +
-          `${(clip.durationMs / 1000).toFixed(1)}s`
-        );
+        const analyzer = new CoverageAnalyzer(outDir, createLogger('Coverage'));
+        const report = analyzer.analyze(scriptText);
+
+        const gaps = opts.script ? report.scriptGaps : report.uncovered;
+        const prompts = analyzer.generatePrompts(gaps);
+
+        console.log(`\n=== Library Coverage: ${report.coveragePercent.toFixed(1)}% ===`);
+        console.log(`${report.coveredPatterns}/${report.totalPatterns} patterns covered (${report.totalClips} clips)`);
+        console.log(`${gaps.length} gap${gaps.length === 1 ? '' : 's'} to fill.\n`);
+
+        if (gaps.length === 0) {
+          console.log('Library has full coverage! Nothing to record.');
+          return;
+        }
+
+        if (report.coveragePercent >= 90) {
+          console.log('Already at 90%+ coverage. Remaining gaps are optional.\n');
+        }
+
+        // Walk the user through each gap
+        const clips = await recorder.runGuidedSession(prompts);
+
+        // Show updated coverage
+        const updatedAnalyzer = new CoverageAnalyzer(outDir, createLogger('Coverage'));
+        const updatedReport = updatedAnalyzer.analyze(scriptText);
+        console.log(`\n=== Updated Coverage: ${updatedReport.coveragePercent.toFixed(1)}% ===`);
+        console.log(`${updatedReport.coveredPatterns}/${updatedReport.totalPatterns} patterns covered (${updatedReport.totalClips} clips)`);
+
+        if (updatedReport.coveragePercent >= 90) {
+          console.log('Target coverage (90%) reached!');
+        } else {
+          console.log(`${(90 - updatedReport.coveragePercent).toFixed(1)}% more needed to reach 90% target.`);
+          console.log('Run again with --fill-gaps to continue filling gaps.');
+        }
+      } else {
+        // Free-form recording mode
+        const clips = await recorder.runInteractiveSession();
+
+        console.log(`\n=== Session Summary ===`);
+        console.log(`Recorded ${clips.length} typing clips.`);
+        for (const clip of clips) {
+          console.log(
+            `  ${clip.audioFile}: ${clip.wordCount} words, ` +
+            `${clip.keystrokes.length} keystrokes, ` +
+            `${clip.backspaceSequences} corrections, ` +
+            `${(clip.durationMs / 1000).toFixed(1)}s`
+          );
+        }
+
+        // Always show current coverage after recording
+        const { CoverageAnalyzer } = await import('./keystroke-recorder/coverage');
+        const analyzer = new CoverageAnalyzer(outDir, createLogger('Coverage'));
+        const report = analyzer.analyze();
+        console.log(`\nLibrary coverage: ${report.coveragePercent.toFixed(1)}% (${report.coveredPatterns}/${report.totalPatterns} patterns)`);
+        if (report.coveragePercent < 90) {
+          console.log(`Run with --fill-gaps to see what patterns are missing.`);
+        }
       }
-      console.log(`\nClips saved to: ${path.resolve(opts.output)}`);
-      console.log('Use these as the typing SFX library in your pipeline config.');
+
+      console.log(`\nClips saved to: ${outDir}`);
     } catch (err) {
       logger.error(`Recording session failed: ${err}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('coverage')
+  .description('Analyze typing SFX library coverage without recording')
+  .option('-o, --output <dir>', 'Typing clips library directory', './sfx-library/typing')
+  .option('--script <path>', 'Path to a script/transcript to check coverage against')
+  .option('--verbose', 'Show all patterns including covered ones')
+  .action(async (opts) => {
+    try {
+      const { CoverageAnalyzer } = await import('./keystroke-recorder/coverage');
+      const outDir = path.resolve(opts.output);
+      const scriptText = opts.script
+        ? fs.readFileSync(path.resolve(opts.script), 'utf-8')
+        : undefined;
+
+      const analyzer = new CoverageAnalyzer(outDir, createLogger('Coverage'));
+      const report = analyzer.analyze(scriptText);
+
+      console.log(`\n=== Typing SFX Library Coverage ===`);
+      console.log(`Total clips:    ${report.totalClips}`);
+      console.log(`Total patterns: ${report.totalPatterns}`);
+      console.log(`Covered:        ${report.coveredPatterns} (${report.coveragePercent.toFixed(1)}%)`);
+      console.log(`Uncovered:      ${report.uncovered.length}`);
+      if (scriptText) {
+        console.log(`Script gaps:    ${report.scriptGaps.length}`);
+      }
+      console.log();
+
+      if (report.coveragePercent >= 90) {
+        console.log('Target coverage (90%) REACHED.\n');
+      } else {
+        console.log(`${(90 - report.coveragePercent).toFixed(1)}% more needed to reach 90% target.\n`);
+      }
+
+      if (opts.verbose && report.covered.length > 0) {
+        console.log('--- Covered Patterns ---');
+        for (const { pattern, clipCount } of report.covered) {
+          console.log(`  [${clipCount} clip${clipCount > 1 ? 's' : ''}] ${pattern.description}`);
+        }
+        console.log();
+      }
+
+      if (report.uncovered.length > 0) {
+        console.log('--- Uncovered Patterns ---');
+        const prompts = analyzer.generatePrompts(report.uncovered);
+        for (const { pattern, prompt } of prompts) {
+          console.log(`  ${pattern.description}`);
+          console.log(`    Example: ${prompt}`);
+        }
+        console.log();
+      }
+
+      if (scriptText && report.scriptGaps.length > 0) {
+        console.log('--- Script-Specific Gaps ---');
+        console.log('These patterns are needed by your script but missing:');
+        const prompts = analyzer.generatePrompts(report.scriptGaps);
+        for (const { pattern, prompt } of prompts) {
+          console.log(`  ${pattern.description}`);
+          console.log(`    Example: ${prompt}`);
+        }
+        console.log();
+        console.log(`Run: auto-broll record-typing --fill-gaps --script ${opts.script}`);
+      } else if (report.uncovered.length > 0) {
+        console.log(`Run: auto-broll record-typing --fill-gaps`);
+      }
+    } catch (err) {
+      logger.error(`Coverage analysis failed: ${err}`);
       process.exit(1);
     }
   });

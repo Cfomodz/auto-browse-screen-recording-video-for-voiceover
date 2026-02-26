@@ -1,9 +1,9 @@
 import { EventEmitter } from 'events';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as readline from 'readline';
 import { KeystrokeEvent, TypingClipMeta } from '../core/types';
 import { Logger } from '../utils/logger';
+import type { TypingPattern } from './coverage';
 
 /**
  * Keystroke Recorder — standalone tool for building the typing audio library.
@@ -294,6 +294,148 @@ export class KeystrokeRecorder extends EventEmitter {
               process.stdout.write(' ');
             } else if (code >= 32 && code < 127) {
               // Printable character
+              this.recordKeystroke(char);
+              process.stdout.write(char);
+            }
+          }
+        }
+      });
+    });
+  }
+
+  /**
+   * Run a guided recording session that walks the user through
+   * specific patterns that are missing from the library.
+   *
+   * For each gap, the system shows what kind of text to type,
+   * auto-starts recording, and waits for Ctrl+S to save.
+   * The user can skip a pattern with Ctrl+N or end early with Ctrl+D.
+   */
+  async runGuidedSession(
+    prompts: Array<{ pattern: TypingPattern; prompt: string }>
+  ): Promise<TypingClipMeta[]> {
+    const clips: TypingClipMeta[] = [];
+
+    if (!process.stdin.isTTY) {
+      this.logger.error('Guided session requires a TTY terminal.');
+      return clips;
+    }
+
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.setEncoding('utf-8');
+
+    this.logger.info('=== Guided Keystroke Recording ===');
+    this.logger.info('For each prompt, type the described text naturally.');
+    this.logger.info('Commands:');
+    this.logger.info('  Ctrl+S  - Save current clip and move to next prompt');
+    this.logger.info('  Ctrl+N  - Skip this prompt');
+    this.logger.info('  Ctrl+D  - End session early');
+    this.logger.info('');
+
+    let promptIndex = 0;
+
+    const showNextPrompt = async () => {
+      if (promptIndex >= prompts.length) {
+        return false;
+      }
+
+      const { pattern, prompt } = prompts[promptIndex];
+      console.log(`\n--- Pattern ${promptIndex + 1}/${prompts.length}: ${pattern.description} ---`);
+      console.log(`Type: ${prompt}`);
+      console.log('(Recording starts now — type when ready)\n');
+
+      await this.startClip();
+      return true;
+    };
+
+    // Show first prompt
+    const hasFirst = await showNextPrompt();
+    if (!hasFirst) {
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      return clips;
+    }
+
+    return new Promise((resolve) => {
+      process.stdin.on('data', async (data: string) => {
+        for (const char of data) {
+          const code = char.charCodeAt(0);
+
+          // Ctrl+D — end session early
+          if (code === 4) {
+            if (this.recording) {
+              const meta = await this.stopClip();
+              clips.push(meta);
+            }
+            process.stdin.setRawMode(false);
+            process.stdin.pause();
+            this.logger.info(`Guided session ended. ${clips.length} clips recorded.`);
+            resolve(clips);
+            return;
+          }
+
+          // Ctrl+S — save clip and advance to next prompt
+          if (code === 19) {
+            if (this.recording) {
+              const meta = await this.stopClip();
+              clips.push(meta);
+              console.log(`  Saved! (${meta.wordCount} words, ${meta.keystrokes.length} keystrokes)`);
+            }
+            promptIndex++;
+            const hasNext = await showNextPrompt();
+            if (!hasNext) {
+              process.stdin.setRawMode(false);
+              process.stdin.pause();
+              this.logger.info(`All prompts complete! ${clips.length} clips recorded.`);
+              resolve(clips);
+              return;
+            }
+            continue;
+          }
+
+          // Ctrl+N (14) — skip this prompt
+          if (code === 14) {
+            if (this.recording) {
+              // Discard current recording
+              this.recording = false;
+              if (this.audioProcess) {
+                this.audioProcess.kill('SIGINT');
+                await new Promise((r) => setTimeout(r, 200));
+                this.audioProcess = null;
+              }
+              // Clean up the partial audio file
+              const clipName = `clip_${String(this.clipCounter).padStart(4, '0')}`;
+              const partialPath = path.join(this.outputDir, `${clipName}.${this.audioFormat}`);
+              if (fs.existsSync(partialPath)) {
+                try { fs.unlinkSync(partialPath); } catch {}
+              }
+              console.log('  (Skipped)');
+            }
+            promptIndex++;
+            const hasNext = await showNextPrompt();
+            if (!hasNext) {
+              process.stdin.setRawMode(false);
+              process.stdin.pause();
+              this.logger.info(`All prompts complete! ${clips.length} clips recorded.`);
+              resolve(clips);
+              return;
+            }
+            continue;
+          }
+
+          // Regular keystrokes while recording
+          if (this.recording) {
+            if (code === 127 || code === 8) {
+              this.recordKeystroke('backspace');
+              process.stdout.write('\b \b');
+            } else if (code === 13) {
+              this.recordKeystroke('enter');
+              process.stdout.write('\n');
+            } else if (code === 32) {
+              this.recordKeystroke('space');
+              process.stdout.write(' ');
+            } else if (code >= 32 && code < 127) {
               this.recordKeystroke(char);
               process.stdout.write(char);
             }

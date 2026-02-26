@@ -15,6 +15,8 @@ export { ImageSearchModule } from './modules/image-search';
 export { SfxManager } from './sfx/manager';
 export { ZoomEngine, ZoomPresets } from './camera/zoom-engine';
 export { KeystrokeRecorder } from './keystroke-recorder/recorder';
+export { CoverageAnalyzer } from './keystroke-recorder/coverage';
+export type { TypingPattern, CoverageReport } from './keystroke-recorder/coverage';
 export { parseTranscript } from './utils/transcript-parser';
 export { createLogger } from './utils/logger';
 
