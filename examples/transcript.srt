@@ -1,0 +1,19 @@
+1
+00:00:00,000 --> 00:00:08,000
+Today we're going to talk about artificial intelligence and how it's transforming the way we live and work.
+
+2
+00:00:08,000 --> 00:00:18,000
+Machine learning, a subset of AI, allows computers to learn from data without being explicitly programmed.
+
+3
+00:00:18,000 --> 00:00:28,000
+One of the most exciting developments is in natural language processing, which powers tools like chatbots and voice assistants.
+
+4
+00:00:28,000 --> 00:00:38,000
+Neural networks, inspired by the human brain, form the backbone of deep learning systems.
+
+5
+00:00:38,000 --> 00:00:48,000
+Companies across every industry are now investing heavily in AI research and deployment.

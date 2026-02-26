@@ -1,0 +1,25 @@
+{
+  "transcriptPath": "./transcript.srt",
+  "audioPath": "./voiceover.mp3",
+  "outputDir": "./output",
+  "viewport": { "width": 1920, "height": 1080 },
+  "browserExecutablePath": "/usr/bin/google-chrome",
+  "searchEngine": "google",
+  "llm": {
+    "provider": "deepseek",
+    "apiKey": "YOUR_DEEPSEEK_API_KEY",
+    "model": "deepseek-chat"
+  },
+  "modules": {
+    "web-search": { "enabled": true },
+    "news-search": { "enabled": true },
+    "definition-search": { "enabled": true },
+    "image-search": { "enabled": true }
+  },
+  "mouseStyle": "realistic",
+  "video": {
+    "fps": 30,
+    "resolution": { "width": 1920, "height": 1080 },
+    "format": "mp4"
+  }
+}
