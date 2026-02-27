@@ -4,6 +4,7 @@ import { PipelineConfig, RecordedSegment, SfxEvent } from '../../core/types';
 import { ZoomEngine } from '../../camera/zoom-engine';
 import { Logger } from '../../utils/logger';
 import { createLogger } from '../../utils/logger';
+import { hasAudioStream } from '../../utils/video';
 
 /**
  * Video Assembler module.
@@ -34,6 +35,89 @@ export class VideoAssembler {
 
     if (config.camera?.enabled) {
       this.zoomEngine = new ZoomEngine(config.camera, createLogger('Zoom'));
+    }
+  }
+
+  /**
+   * Bake SFX audio into a clip file immediately after recording.
+   * Makes clips self-contained for debugging and progressive assembly.
+   */
+  async bakeSfxIntoClip(
+    videoPath: string,
+    sfxEvents: SfxEvent[],
+    durationSeconds: number
+  ): Promise<void> {
+    if (!sfxEvents.length || !this.config.sfx?.enabled) return;
+
+    const validEvents = sfxEvents.filter((e) => fs.existsSync(e.audioFile));
+    if (validEvents.length === 0) return;
+
+    const ffmpeg = require('fluent-ffmpeg') as typeof import('fluent-ffmpeg');
+    const tmpDir = path.join(this.config.outputDir, 'tmp');
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const sfxTrackPath = path.join(tmpDir, `sfx_${path.basename(videoPath, '.mp4')}.wav`);
+    const outPath = path.join(tmpDir, `baked_${path.basename(videoPath)}`);
+
+    const sfxVolume = this.config.sfx.volume ?? 0.5;
+
+    const sfxLabels = validEvents.map((_, i) => `[sfx${i}]`).join('');
+    const filterGraph = [
+      '[0:a]volume=0[silence]',
+      ...validEvents.map((event, i) => {
+        const delayMs = Math.round(event.timeOffset * 1000);
+        return `[${i + 1}:a]adelay=${delayMs}|${delayMs},volume=${sfxVolume}[sfx${i}]`;
+      }),
+      `[silence]${sfxLabels}amix=inputs=${validEvents.length + 1}:duration=first:dropout_transition=0[out]`,
+    ].join(';');
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        let cmd = ffmpeg()
+          .input('anullsrc=channel_layout=stereo:sample_rate=44100')
+          .inputOptions(['-f', 'lavfi', '-t', durationSeconds.toFixed(3)]);
+
+        for (const e of validEvents) cmd = cmd.input(e.audioFile);
+
+        cmd
+          .complexFilter(filterGraph, ['out'])
+          .outputOptions(['-c:a pcm_s16le'])
+          .output(sfxTrackPath)
+          .on('end', () => resolve())
+          .on('error', (err: Error) => reject(err))
+          .run();
+      });
+    } catch (err) {
+      this.logger.warn(`SFX track build failed: ${(err as Error).message}`);
+      if (fs.existsSync(sfxTrackPath)) fs.unlinkSync(sfxTrackPath);
+      throw err;
+    }
+
+    if (!fs.existsSync(sfxTrackPath) || fs.statSync(sfxTrackPath).size === 0) return;
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg()
+          .input(videoPath)
+          .input(sfxTrackPath)
+          .outputOptions(['-c:v copy', '-c:a aac', '-b:a 192k', '-shortest', '-map 0:v:0', '-map 1:a:0'])
+          .output(outPath)
+          .on('end', () => {
+            fs.renameSync(outPath, videoPath);
+            try {
+              fs.unlinkSync(sfxTrackPath);
+            } catch {}
+            resolve();
+          })
+          .on('error', (err: Error) => reject(err))
+          .run();
+      });
+    } catch (err) {
+      try {
+        if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
+        if (fs.existsSync(sfxTrackPath)) fs.unlinkSync(sfxTrackPath);
+      } catch {}
+      this.logger.warn(`Bake SFX into clip failed: ${(err as Error).message}`);
+      throw err;
     }
   }
 
@@ -130,6 +214,8 @@ export class VideoAssembler {
         videoFilters.push(`setpts=${(1 / factor).toFixed(3)}*PTS`);
       }
 
+      const inputHasAudio = seg.sfxBaked || (await hasAudioStream(seg.filePath));
+
       await new Promise<void>((resolve, reject) => {
         let cmd = ffmpeg().input(seg.filePath);
 
@@ -142,8 +228,18 @@ export class VideoAssembler {
           '-pix_fmt yuv420p',
           '-preset fast',
           '-crf 23',
-          '-an',
+          '-map 0:v:0',
         ];
+
+        if (inputHasAudio) {
+          outputOpts.push('-map', '0:a:0', '-c:a', 'aac', '-b:a', '192k');
+        } else {
+          // Add silent audio so concat gets consistent streams
+          cmd = cmd
+            .input('anullsrc=channel_layout=stereo:sample_rate=44100')
+            .inputOptions(['-f', 'lavfi', '-t', (seg.endTime - seg.startTime).toFixed(3)]);
+          outputOpts.push('-map', '1:a:0', '-c:a', 'aac', '-b:a', '192k');
+        }
 
         if (videoFilters.length > 0) {
           cmd = cmd.videoFilters(videoFilters.join(','));
@@ -166,13 +262,14 @@ export class VideoAssembler {
   /**
    * Build a global SFX timeline by adjusting each segment's SFX events
    * to account for the segment's position in the final video.
+   * Skips segments that have SFX already baked into the clip.
    */
   private buildGlobalSfxTimeline(segments: RecordedSegment[]): SfxEvent[] {
     const globalEvents: SfxEvent[] = [];
     let cumulativeOffset = 0;
 
     for (const seg of segments) {
-      if (seg.sfxEvents) {
+      if (!seg.sfxBaked && seg.sfxEvents) {
         for (const event of seg.sfxEvents) {
           globalEvents.push({
             ...event,
@@ -260,13 +357,13 @@ export class VideoAssembler {
         .input(voiceoverPath);
 
       if (sfxTrackPath && fs.existsSync(sfxTrackPath) && fs.statSync(sfxTrackPath).size > 0) {
-        // Three inputs: video, voiceover, SFX
+        // Three inputs: concat (video+audio with baked SFX), voiceover, extra SFX track
         cmd = cmd.input(sfxTrackPath);
 
         cmd
           .complexFilter([
-            // Mix voiceover and SFX audio tracks
-            '[1:a][2:a]amix=inputs=2:duration=shortest:dropout_transition=2[aout]',
+            // Mix concat audio (baked SFX) + voiceover + extra SFX for non-baked segments
+            '[0:a][1:a][2:a]amix=inputs=3:duration=shortest:dropout_transition=2[aout]',
           ], ['aout'])
           .outputOptions([
             '-c:v copy',
@@ -283,15 +380,17 @@ export class VideoAssembler {
           .on('error', (err: Error) => reject(err))
           .run();
       } else {
-        // Two inputs: video + voiceover only
+        // Concat has video+audio (baked SFX); mix with voiceover
         cmd
+          .complexFilter([
+            '[0:a][1:a]amix=inputs=2:duration=shortest:dropout_transition=2[aout]',
+          ], ['aout'])
           .outputOptions([
             '-c:v copy',
             '-c:a aac',
             '-b:a 192k',
             '-shortest',
             '-map 0:v:0',
-            '-map 1:a:0',
           ])
           .output(outputPath)
           .on('end', () => {

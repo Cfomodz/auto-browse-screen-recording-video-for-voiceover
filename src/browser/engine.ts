@@ -158,6 +158,7 @@ export class BrowserEngine {
     // Find and click search input
     const searchSelectors = [
       'input[name="q"]',            // Google & DuckDuckGo
+      'textarea[name="q"]',         // Google (sometimes uses textarea)
       'input[name="query"]',        // Some engines
       'input[type="search"]',       // Generic
       '#search-input',              // Brave
@@ -192,6 +193,23 @@ export class BrowserEngine {
     }
 
     await humanDelay(300, 600);
+
+    // Explicitly focus the search input before typing — keyboard.type() sends to
+    // the focused element; a click alone may not establish focus on Google, etc.
+    let focused = false;
+    for (const selector of searchSelectors) {
+      try {
+        await this.page.focus(selector);
+        focused = true;
+        break;
+      } catch {
+        // Try next selector
+      }
+    }
+    if (!focused) {
+      this.logger.warn('Could not focus search input; typing may not appear.');
+    }
+
     await this.humanType(query);
     await humanDelay(200, 400);
     await this.page.keyboard.press('Enter');

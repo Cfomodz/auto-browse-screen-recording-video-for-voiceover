@@ -16,3 +16,18 @@ export function getVideoDuration(filePath: string): Promise<number> {
     });
   });
 }
+
+/** Check if a media file has an audio stream. */
+export function hasAudioStream(filePath: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const ffmpeg = require('fluent-ffmpeg') as typeof import('fluent-ffmpeg');
+    ffmpeg.ffprobe(path.resolve(filePath), (err: Error | null, data: { streams?: { codec_type?: string }[] }) => {
+      if (err) {
+        resolve(false);
+        return;
+      }
+      const hasAudio = (data?.streams ?? []).some((s) => s.codec_type === 'audio');
+      resolve(hasAudio);
+    });
+  });
+}

@@ -192,7 +192,28 @@ export class Pipeline extends EventEmitter {
             topic
           );
 
-          const filePath = await this.recorder.stopRecording(clipName);
+          let filePath = await this.recorder.stopRecording(clipName);
+          let sfxBaked = false;
+
+          // Bake SFX into clip for debugging and progressive assembly
+          if (
+            result.sfxEvents &&
+            result.sfxEvents.length > 0 &&
+            this.config.sfx?.enabled &&
+            this.assembler
+          ) {
+            try {
+              await this.assembler.bakeSfxIntoClip(
+                filePath,
+                result.sfxEvents,
+                result.durationSeconds
+              );
+              sfxBaked = true;
+            } catch (err) {
+              this.logger.warn(`Could not bake SFX into clip: ${err}`);
+            }
+          }
+
           const segStart = topic.segments[0]?.startTime ?? 0;
           const segEnd = topic.segments[topic.segments.length - 1]?.endTime ?? result.durationSeconds;
 
@@ -205,6 +226,7 @@ export class Pipeline extends EventEmitter {
             endTime: segEnd,
             zoomKeyframes: result.zoomKeyframes,
             sfxEvents: result.sfxEvents,
+            sfxBaked,
           };
 
           recordedSegments.push(recorded);
@@ -317,12 +339,32 @@ export class Pipeline extends EventEmitter {
       return recorded;
     }
 
-    await this.browser.launch();
+      await this.browser.launch();
     try {
       this.emit_event({ type: 'recording-start', topic, action: actionType });
       await this.recorder.startRecording(this.browser.page, clipName);
       const result = await mod.execute(this.browser.page, this.browser, topic);
-      const filePath = await this.recorder.stopRecording(clipName);
+      let filePath = await this.recorder.stopRecording(clipName);
+      let sfxBaked = false;
+
+      if (
+        result.sfxEvents &&
+        result.sfxEvents.length > 0 &&
+        this.config.sfx?.enabled &&
+        this.assembler
+      ) {
+        try {
+          await this.assembler.bakeSfxIntoClip(
+            filePath,
+            result.sfxEvents,
+            result.durationSeconds
+          );
+          sfxBaked = true;
+        } catch (err) {
+          this.logger.warn(`Could not bake SFX into clip: ${err}`);
+        }
+      }
+
       const segStart = topic.segments[0]?.startTime ?? 0;
       const segEnd = topic.segments[topic.segments.length - 1]?.endTime ?? result.durationSeconds;
       const recorded: RecordedSegment = {
@@ -334,6 +376,7 @@ export class Pipeline extends EventEmitter {
         endTime: segEnd,
         zoomKeyframes: result.zoomKeyframes,
         sfxEvents: result.sfxEvents,
+        sfxBaked,
       };
       this.emit_event({ type: 'recording-complete', segment: recorded });
       return recorded;

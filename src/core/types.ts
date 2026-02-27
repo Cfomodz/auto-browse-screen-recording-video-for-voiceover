@@ -180,6 +180,8 @@ export interface RecordedSegment {
   zoomKeyframes?: ZoomKeyframe[];
   /** SFX events to overlay during this segment. */
   sfxEvents?: SfxEvent[];
+  /** True if SFX has been baked into the clip file (for debugging and progressive assembly). */
+  sfxBaked?: boolean;
 }
 
 /** A sound effect event to overlay at a specific time in a clip. */
