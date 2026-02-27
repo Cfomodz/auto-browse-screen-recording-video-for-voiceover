@@ -141,29 +141,63 @@ export class SfxManager {
 
     const wordCount = text.split(/\s+/).filter(Boolean).length;
     const charCount = text.length;
+    const keystrokeCount = (c: TypingClipMeta) => (c.keystrokes ?? []).length;
 
-    // Score each clip by how well it matches
-    const scored = this.typingClips.map((clip) => {
+    // Score each clip: character/keystroke alignment matters most for audio-visual sync
+    const scored = this.typingClips
+      .filter((clip) => keystrokeCount(clip) >= charCount * 0.5) // Need enough timestamps
+      .map((clip) => {
+        let score = 0;
+        const ksLen = keystrokeCount(clip);
+
+        // Character count similarity (primary - typing rhythm and audio length must match)
+        const charDiff = Math.abs(clip.typedText.length - charCount);
+        score -= charDiff * 5;
+
+        // Prefer clips with enough keystrokes for our text
+        const keystrokeShortfall = Math.max(0, charCount - ksLen);
+        score -= keystrokeShortfall * 3;
+
+        // Word count similarity (secondary)
+        const wordDiff = Math.abs(clip.wordCount - wordCount);
+        score -= wordDiff * 2;
+
+        // Prefer clips without excessive backspaces for clean text
+        score -= clip.backspaceSequences * 2;
+
+        return { clip, score };
+      });
+
+    if (scored.length === 0) {
+      this.logger.debug(
+        `No typing clip has enough keystrokes for ${charCount} chars; using best available`
+      );
+    }
+    const fallback = this.typingClips.map((clip) => {
       let score = 0;
-
-      // Word count similarity (most important)
-      const wordDiff = Math.abs(clip.wordCount - wordCount);
-      score -= wordDiff * 10;
-
-      // Character count similarity
       const charDiff = Math.abs(clip.typedText.length - charCount);
-      score -= charDiff;
-
-      // Prefer clips without excessive backspaces for clean text
+      score -= charDiff * 5;
+      score -= Math.abs(clip.wordCount - wordCount) * 2;
       score -= clip.backspaceSequences * 2;
-
       return { clip, score };
     });
-
-    scored.sort((a, b) => b.score - a.score);
-    const best = scored[0];
+    fallback.sort((a, b) => b.score - a.score);
+    const candidates = scored.length > 0 ? scored : fallback;
+    const sorted = [...candidates].sort((a, b) => b.score - a.score);
+    const best = sorted[0];
 
     if (!best) return null;
+
+    const ks = best.clip.keystrokes ?? [];
+    const timestamps = ks.map((k) => k.timestampMs);
+    const span = timestamps.length > 0 ? `${timestamps[0]}→${timestamps[timestamps.length - 1]}ms` : 'none';
+    this.logger.debug(
+      `Typing SFX: ${path.basename(best.clip.audioFile)} | ` +
+        `recorded "${best.clip.typedText.substring(0, 25)}${best.clip.typedText.length > 25 ? '...' : ''}" (${best.clip.wordCount}w) | ` +
+        `typing "${text.substring(0, 25)}${text.length > 25 ? '...' : ''}" (${text.length} chars) | ` +
+        `place @ ${timeOffset.toFixed(2)}s | ` +
+        `${ks.length} keystrokes, timestamps ${span}`
+    );
 
     return {
       event: {

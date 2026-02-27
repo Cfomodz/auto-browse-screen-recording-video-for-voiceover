@@ -20,7 +20,7 @@ import { DefinitionSearchModule } from '../modules/definition-search';
 import { ImageSearchModule } from '../modules/image-search';
 import { SfxManager } from '../sfx/manager';
 import { parseTranscript } from '../utils/transcript-parser';
-import { getVideoDuration } from '../utils/video';
+import { getVideoDuration, hasAudioStream, measureAudioLevel } from '../utils/video';
 import { createLogger, Logger } from '../utils/logger';
 
 const TOPICS_CACHE_FILE = 'topics-cache.json';
@@ -166,6 +166,18 @@ export class Pipeline extends EventEmitter {
             const stat = fs.statSync(existingPath);
             if (stat.size > 0) {
               this.logger.debug(`Pickup: using existing clip ${clipName}.mp4`);
+              if (this.config.sfx?.enabled) {
+                const hasAudio = await hasAudioStream(existingPath);
+                if (hasAudio) {
+                  const level = measureAudioLevel(existingPath);
+                  if (level.isSilent) {
+                    throw new Error(
+                      `Existing clip "${clipName}" has audio track but it's too quiet (peak ${level.peakDb.toFixed(1)} dB). ` +
+                        `Delete the clip and re-run to re-bake with higher sfx.volume.`
+                    );
+                  }
+                }
+              }
               const durationSeconds = await getVideoDuration(existingPath);
               const segStart = topic.segments[0]?.startTime ?? 0;
               const segEnd = topic.segments[topic.segments.length - 1]?.endTime ?? segStart + durationSeconds;
@@ -211,6 +223,29 @@ export class Pipeline extends EventEmitter {
               sfxBaked = true;
             } catch (err) {
               this.logger.warn(`Could not bake SFX into clip: ${err}`);
+            }
+          }
+
+          // Verify clip has audio content when SFX was expected
+          if (
+            result.sfxEvents &&
+            result.sfxEvents.length > 0 &&
+            this.config.sfx?.enabled &&
+            fs.statSync(filePath).size > 0
+          ) {
+            const hasAudio = await hasAudioStream(filePath);
+            if (!hasAudio) {
+              throw new Error(
+                `Clip "${clipName}" has no audio track after SFX bake. ` +
+                  `Expected typing/click sounds. Check FFmpeg and sfx-library.`
+              );
+            }
+            const level = measureAudioLevel(filePath);
+            if (level.isSilent) {
+              throw new Error(
+                `Clip "${clipName}" audio track too quiet (peak ${level.peakDb.toFixed(1)} dB, need >= -45 dB). ` +
+                  `Raise sfx.volume in config, check sfx-library, or delete clip to re-bake with new settings.`
+              );
             }
           }
 
@@ -362,6 +397,28 @@ export class Pipeline extends EventEmitter {
           sfxBaked = true;
         } catch (err) {
           this.logger.warn(`Could not bake SFX into clip: ${err}`);
+        }
+      }
+
+      if (
+        result.sfxEvents &&
+        result.sfxEvents.length > 0 &&
+        this.config.sfx?.enabled &&
+        fs.statSync(filePath).size > 0
+      ) {
+        const hasAudio = await hasAudioStream(filePath);
+        if (!hasAudio) {
+          throw new Error(
+            `Clip "${clipName}" has no audio track after SFX bake. ` +
+              `Expected typing/click sounds. Check FFmpeg and sfx-library.`
+          );
+        }
+        const level = measureAudioLevel(filePath);
+        if (level.isSilent) {
+          throw new Error(
+            `Clip "${clipName}" audio track too quiet (peak ${level.peakDb.toFixed(1)} dB, need >= -45 dB). ` +
+              `Raise sfx.volume in config, check sfx-library, or delete clip to re-bake with new settings.`
+          );
         }
       }
 

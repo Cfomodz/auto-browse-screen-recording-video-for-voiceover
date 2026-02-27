@@ -24,7 +24,7 @@
   "sfx": {
     "enabled": true,
     "libraryPath": "./sfx-library",
-    "volume": 0.4,
+    "volume": 1.4,
     "mouseClick": { "enabled": true, "samplesDir": "clicks" },
     "keyboardTyping": { "enabled": true, "samplesDir": "typing", "targetLUFS": -10 }
   },

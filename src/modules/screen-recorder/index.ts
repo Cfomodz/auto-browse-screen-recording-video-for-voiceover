@@ -106,8 +106,13 @@ export class ScreenRecorder {
       // Dynamic import to avoid hard dependency if ffmpeg not needed yet
       const ffmpeg = require('fluent-ffmpeg') as typeof import('fluent-ffmpeg');
 
+      // Use absolute path with forward slashes — FFmpeg image2 on Windows
+      // can fail with backslashes (e.g. \f in path misparsed)
+      const framePattern = path.resolve(this.frameDir, 'frame_%06d.png').replace(/\\/g, '/');
+
       ffmpeg()
-        .input(path.join(this.frameDir, 'frame_%06d.png'))
+        .input(framePattern)
+        .inputOptions(['-f', 'image2', '-start_number', '0'])
         .inputFPS(this.config.video.fps)
         .outputOptions([
           '-c:v libx264',

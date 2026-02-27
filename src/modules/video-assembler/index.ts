@@ -4,7 +4,8 @@ import { PipelineConfig, RecordedSegment, SfxEvent } from '../../core/types';
 import { ZoomEngine } from '../../camera/zoom-engine';
 import { Logger } from '../../utils/logger';
 import { createLogger } from '../../utils/logger';
-import { hasAudioStream } from '../../utils/video';
+import { getVideoDuration, hasAudioStream } from '../../utils/video';
+import { createSilentWav } from '../../utils/audio';
 
 /**
  * Video Assembler module.
@@ -41,16 +42,39 @@ export class VideoAssembler {
   /**
    * Bake SFX audio into a clip file immediately after recording.
    * Makes clips self-contained for debugging and progressive assembly.
+   *
+   * SFX timeOffsets are in real-time (seconds since module start). The video
+   * duration may differ (frame count / fps) if the screencast capture rate
+   * differs from real-time. We scale timeOffsets to match the actual video.
    */
   async bakeSfxIntoClip(
     videoPath: string,
     sfxEvents: SfxEvent[],
-    durationSeconds: number
+    realDurationSeconds: number
   ): Promise<void> {
     if (!sfxEvents.length || !this.config.sfx?.enabled) return;
 
     const validEvents = sfxEvents.filter((e) => fs.existsSync(e.audioFile));
     if (validEvents.length === 0) return;
+
+    const videoDuration = await getVideoDuration(videoPath).catch(() => realDurationSeconds);
+
+    const scale = videoDuration / realDurationSeconds;
+    const scaledEvents = validEvents.map((e) => ({
+      ...e,
+      timeOffset: e.timeOffset * scale,
+    }));
+
+    this.logger.debug(
+      `Baking SFX into clip (${path.basename(videoPath)}): ${scaledEvents.length} events, ` +
+        `video ${videoDuration.toFixed(1)}s, real ${realDurationSeconds.toFixed(1)}s, scale ${scale.toFixed(2)}x`
+    );
+    for (let i = 0; i < scaledEvents.length; i++) {
+      const e = scaledEvents[i];
+      this.logger.debug(
+        `  [${i}] ${e.type} @ ${e.timeOffset.toFixed(2)}s | ${path.basename(e.audioFile)} | ${e.durationSeconds.toFixed(2)}s`
+      );
+    }
 
     const ffmpeg = require('fluent-ffmpeg') as typeof import('fluent-ffmpeg');
     const tmpDir = path.join(this.config.outputDir, 'tmp');
@@ -60,23 +84,22 @@ export class VideoAssembler {
 
     const sfxVolume = this.config.sfx.volume ?? 0.5;
 
-    const sfxLabels = validEvents.map((_, i) => `[sfx${i}]`).join('');
+    const sfxLabels = scaledEvents.map((_, i) => `[sfx${i}]`).join('');
     const filterGraph = [
-      '[0:a]volume=0[silence]',
-      ...validEvents.map((event, i) => {
+      ...scaledEvents.map((event, i) => {
         const delayMs = Math.round(event.timeOffset * 1000);
         return `[${i + 1}:a]adelay=${delayMs}|${delayMs},volume=${sfxVolume}[sfx${i}]`;
       }),
-      `[silence]${sfxLabels}amix=inputs=${validEvents.length + 1}:duration=first:dropout_transition=0[out]`,
+      `[0:a]${sfxLabels}amix=inputs=${scaledEvents.length + 1}:duration=first:dropout_transition=0[out]`,
     ].join(';');
+
+    const silencePath = createSilentWav(tmpDir, videoDuration);
 
     try {
       await new Promise<void>((resolve, reject) => {
-        let cmd = ffmpeg()
-          .input('anullsrc=channel_layout=stereo:sample_rate=44100')
-          .inputOptions(['-f', 'lavfi', '-t', durationSeconds.toFixed(3)]);
+        let cmd = ffmpeg().input(silencePath);
 
-        for (const e of validEvents) cmd = cmd.input(e.audioFile);
+        for (const e of scaledEvents) cmd = cmd.input(e.audioFile);
 
         cmd
           .complexFilter(filterGraph, ['out'])
@@ -88,9 +111,16 @@ export class VideoAssembler {
       });
     } catch (err) {
       this.logger.warn(`SFX track build failed: ${(err as Error).message}`);
-      if (fs.existsSync(sfxTrackPath)) fs.unlinkSync(sfxTrackPath);
+      try {
+        if (fs.existsSync(sfxTrackPath)) fs.unlinkSync(sfxTrackPath);
+        if (fs.existsSync(silencePath)) fs.unlinkSync(silencePath);
+      } catch {}
       throw err;
     }
+
+    try {
+      if (fs.existsSync(silencePath)) fs.unlinkSync(silencePath);
+    } catch {}
 
     if (!fs.existsSync(sfxTrackPath) || fs.statSync(sfxTrackPath).size === 0) return;
 
@@ -231,13 +261,17 @@ export class VideoAssembler {
           '-map 0:v:0',
         ];
 
+        let silencePath: string | null = null;
         if (inputHasAudio) {
           outputOpts.push('-map', '0:a:0', '-c:a', 'aac', '-b:a', '192k');
         } else {
-          // Add silent audio so concat gets consistent streams
-          cmd = cmd
-            .input('anullsrc=channel_layout=stereo:sample_rate=44100')
-            .inputOptions(['-f', 'lavfi', '-t', (seg.endTime - seg.startTime).toFixed(3)]);
+          // Add silent audio so concat gets consistent streams (no lavfi)
+          const silenceDuration = seg.endTime - seg.startTime;
+          silencePath = createSilentWav(
+            path.join(this.config.outputDir, 'tmp'),
+            silenceDuration
+          );
+          cmd = cmd.input(silencePath);
           outputOpts.push('-map', '1:a:0', '-c:a', 'aac', '-b:a', '192k');
         }
 
@@ -248,8 +282,18 @@ export class VideoAssembler {
         cmd
           .outputOptions(outputOpts)
           .output(processedPath)
-          .on('end', () => resolve())
-          .on('error', (err: Error) => reject(err))
+          .on('end', () => {
+            try {
+              if (silencePath && fs.existsSync(silencePath)) fs.unlinkSync(silencePath);
+            } catch {}
+            resolve();
+          })
+          .on('error', (err: Error) => {
+            try {
+              if (silencePath && fs.existsSync(silencePath)) fs.unlinkSync(silencePath);
+            } catch {}
+            reject(err);
+          })
           .run();
       });
 
