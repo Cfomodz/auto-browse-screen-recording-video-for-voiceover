@@ -238,40 +238,62 @@ export class SfxManager {
   /**
    * Build a complete SFX timeline for a typing sequence.
    *
-   * For longer texts, this may chain multiple typing clips together,
+   * For longer texts, this chains multiple typing clips together,
    * picking clips that cover subsets of the words.
    */
   buildTypingTimeline(
     text: string,
     startTimeOffset: number
   ): SfxEvent[] {
+    return this.buildTypingTimelineWithKeystrokes(text, startTimeOffset)
+      .map((c) => c.event);
+  }
+
+  /**
+   * Build a complete typed timeline with per-chunk keystroke data.
+   *
+   * Splits the text into word-count-matched chunks, one clip per chunk.
+   * Each chunk carries its own event (for audio placement) and keystroke
+   * timing array (for driving the visual typing cadence), enabling full
+   * audio-driven multi-clip typing across arbitrarily long searches.
+   *
+   * @param text             The full text that will be typed
+   * @param startTimeOffset  Clip-relative start time in seconds
+   */
+  buildTypingTimelineWithKeystrokes(
+    text: string,
+    startTimeOffset: number
+  ): Array<{ event: SfxEvent; chunkText: string; keystrokes: KeystrokeEvent[] }> {
     if (!this.config.keyboardTyping.enabled || this.typingClips.length === 0) {
       return [];
     }
 
     const words = text.split(/\s+/).filter(Boolean);
-    const events: SfxEvent[] = [];
+    const chunks: Array<{ event: SfxEvent; chunkText: string; keystrokes: KeystrokeEvent[] }> = [];
     let currentOffset = startTimeOffset;
     let wordsRemaining = [...words];
 
     while (wordsRemaining.length > 0) {
-      // Try to find a clip that covers as many remaining words as possible
-      const chunk = wordsRemaining.join(' ');
-      const result = this.getTypingSfx(chunk, currentOffset);
+      const candidateText = wordsRemaining.join(' ');
+      const result = this.getTypingSfx(candidateText, currentOffset);
 
-      if (!result) {
-        // No clips available — skip remaining words
-        break;
-      }
+      if (!result) break;
 
-      events.push(result.event);
-      currentOffset += result.event.durationSeconds;
-
-      // Consume words covered by this clip
+      // Consume as many words as the matched clip covers
       const coveredWords = Math.max(1, result.keystrokes.wordCount);
+      const chunkWords = wordsRemaining.slice(0, coveredWords);
+      const chunkText = chunkWords.join(' ');
+
+      chunks.push({
+        event: result.event,
+        chunkText,
+        keystrokes: result.keystrokes.keystrokes,
+      });
+
+      currentOffset += result.event.durationSeconds;
       wordsRemaining = wordsRemaining.slice(coveredWords);
     }
 
-    return events;
+    return chunks;
   }
 }

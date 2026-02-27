@@ -63,21 +63,21 @@ export class TypingAnimator {
   ): Promise<{ durationMs: number; sfxEvents: SfxEvent[] }> {
     const sfxEvents: SfxEvent[] = [];
 
-    // Try audio-driven typing first: select SFX clips, then use their
-    // keystroke timestamps to drive the visual cadence
+    // Try audio-driven typing: build a multi-clip chain so the full text
+    // is covered by real keystroke recordings, not just one nearest clip.
     if (this.sfxManager) {
-      const audioResult = this.sfxManager.getTypingSfxWithKeystrokes(text, clipTimeOffset / 1000);
-      if (audioResult && audioResult.keystrokes.length > 0) {
-        sfxEvents.push(audioResult.event);
-        const durationMs = await this.typeWithAudioCadence(
-          page,
-          text,
-          audioResult.keystrokes
-        );
+      const chunks = this.sfxManager.buildTypingTimelineWithKeystrokes(text, clipTimeOffset / 1000);
+      if (chunks.length > 0) {
+        let totalMs = 0;
+        for (const chunk of chunks) {
+          sfxEvents.push(chunk.event);
+          const chunkMs = await this.typeWithAudioCadence(page, chunk.chunkText, chunk.keystrokes);
+          totalMs += chunkMs;
+        }
         this.logger.info(
-          `Audio-driven typing: ${text.length} chars in ${(durationMs / 1000).toFixed(1)}s`
+          `Audio-driven typing: ${text.length} chars across ${chunks.length} clip(s) in ${(totalMs / 1000).toFixed(1)}s`
         );
-        return { durationMs, sfxEvents };
+        return { durationMs: totalMs, sfxEvents };
       }
     }
 
