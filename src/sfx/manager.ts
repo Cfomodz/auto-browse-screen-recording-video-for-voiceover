@@ -1,6 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { SfxConfig, SfxEvent, KeystrokeEvent, TypingClipMeta } from '../core/types';
+import {
+  SfxConfig,
+  SfxEvent,
+  KeystrokeEvent,
+  TypingClipMeta,
+  ClickButtonType,
+  ClickClipMeta,
+  ScrollClipMeta,
+} from '../core/types';
 import { Logger } from '../utils/logger';
 
 /**
@@ -17,9 +25,16 @@ export class SfxManager {
   private config: SfxConfig;
   private logger: Logger;
 
+  /** Legacy flat click WAVs (backwards-compat when subdirs don't exist). */
   private clickSamples: string[] = [];
+  /** Click clips categorised by button type (loaded from left/ right/ double/ subdirs). */
+  private leftClickClips: ClickClipMeta[] = [];
+  private rightClickClips: ClickClipMeta[] = [];
+  private doubleClickClips: ClickClipMeta[] = [];
+  private lastClickIndex: Record<ClickButtonType, number> = { left: 0, right: 0, double: 0 };
+
   private typingClips: TypingClipMeta[] = [];
-  private lastClickIndex = 0;
+  private scrollClips: ScrollClipMeta[] = [];
 
   constructor(config: SfxConfig, logger: Logger) {
     this.config = config;
@@ -36,11 +51,26 @@ export class SfxManager {
 
   /** Load all audio samples from the configured library directories. */
   private loadLibrary(): void {
-    // Load click samples
+    // Load click samples (typed subdirs take priority over flat legacy dir)
     if (this.config.mouseClick.enabled) {
-      const clickDir = path.join(this.config.libraryPath, this.config.mouseClick.samplesDir);
-      this.clickSamples = this.loadAudioFiles(clickDir);
-      this.logger.info(`Loaded ${this.clickSamples.length} click samples from ${clickDir}`);
+      const clickRoot = path.join(this.config.libraryPath, this.config.mouseClick.samplesDir);
+      const leftDir = path.join(clickRoot, 'left');
+      const rightDir = path.join(clickRoot, 'right');
+      const doubleDir = path.join(clickRoot, 'double');
+
+      if (fs.existsSync(leftDir) || fs.existsSync(rightDir) || fs.existsSync(doubleDir)) {
+        this.leftClickClips = this.loadClickClips(leftDir, 'left');
+        this.rightClickClips = this.loadClickClips(rightDir, 'right');
+        this.doubleClickClips = this.loadClickClips(doubleDir, 'double');
+        this.logger.info(
+          `Loaded click clips: ${this.leftClickClips.length} left, ` +
+          `${this.rightClickClips.length} right, ${this.doubleClickClips.length} double`
+        );
+      } else {
+        // Legacy: flat WAV files with no JSON sidecars
+        this.clickSamples = this.loadAudioFiles(clickRoot);
+        this.logger.info(`Loaded ${this.clickSamples.length} click samples (legacy flat) from ${clickRoot}`);
+      }
     }
 
     // Load typing clips with their metadata
@@ -48,6 +78,13 @@ export class SfxManager {
       const typingDir = path.join(this.config.libraryPath, this.config.keyboardTyping.samplesDir);
       this.typingClips = this.loadTypingClips(typingDir);
       this.logger.info(`Loaded ${this.typingClips.length} typing clips from ${typingDir}`);
+    }
+
+    // Load scroll clips
+    if (this.config.mouseScroll?.enabled) {
+      const scrollDir = path.join(this.config.libraryPath, this.config.mouseScroll.samplesDir);
+      this.scrollClips = this.loadScrollClips(scrollDir);
+      this.logger.info(`Loaded ${this.scrollClips.length} scroll clips from ${scrollDir}`);
     }
   }
 
@@ -101,21 +138,158 @@ export class SfxManager {
     return clips;
   }
 
-  /** Get a click sound effect event at a given time offset. */
-  getClickSfx(timeOffset: number): SfxEvent | null {
-    if (!this.config.mouseClick.enabled || this.clickSamples.length === 0) {
-      return null;
+  /**
+   * Load click clips from a typed subdir (left/ right/ double/).
+   * Expects JSON sidecars with ClickClipMeta. Falls back to creating
+   * minimal meta for plain WAV files found without a sidecar.
+   */
+  private loadClickClips(dir: string, clickType: ClickButtonType): ClickClipMeta[] {
+    if (!fs.existsSync(dir)) return [];
+
+    const extensions = new Set(['.wav', '.mp3', '.ogg', '.flac']);
+    const clips: ClickClipMeta[] = [];
+
+    const jsonFiles = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
+    for (const jsonFile of jsonFiles) {
+      try {
+        const meta: ClickClipMeta = JSON.parse(
+          fs.readFileSync(path.join(dir, jsonFile), 'utf-8')
+        );
+        meta.audioFile = path.resolve(dir, meta.audioFile);
+        if (fs.existsSync(meta.audioFile)) clips.push(meta);
+      } catch {
+        this.logger.warn(`Failed to load click clip metadata: ${jsonFile}`);
+      }
     }
 
-    // Cycle through click samples with some randomness to avoid repetition
-    const index = (this.lastClickIndex + 1 + Math.floor(Math.random() * Math.max(1, this.clickSamples.length - 1))) % this.clickSamples.length;
-    this.lastClickIndex = index;
+    // Also accept bare audio files with no sidecar (0ms clickSignal = audio starts at click)
+    if (clips.length === 0) {
+      const audioFiles = fs.readdirSync(dir)
+        .filter((f) => extensions.has(path.extname(f).toLowerCase()))
+        .map((f) => path.join(dir, f));
+      for (const audioFile of audioFiles) {
+        clips.push({ audioFile, durationMs: 300, clickType, clickSignalMs: 0 });
+      }
+    }
 
+    return clips;
+  }
+
+  /**
+   * Load scroll clips from JSON sidecars.
+   * Expected structure: scrolls/clip_001.wav + clip_001.json (ScrollClipMeta)
+   */
+  private loadScrollClips(dir: string): ScrollClipMeta[] {
+    if (!fs.existsSync(dir)) {
+      this.logger.warn(`Scroll clips directory does not exist: ${dir}`);
+      return [];
+    }
+
+    const clips: ScrollClipMeta[] = [];
+    const jsonFiles = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
+
+    for (const jsonFile of jsonFiles) {
+      try {
+        const meta: ScrollClipMeta = JSON.parse(
+          fs.readFileSync(path.join(dir, jsonFile), 'utf-8')
+        );
+        meta.audioFile = path.resolve(dir, meta.audioFile);
+        if (fs.existsSync(meta.audioFile)) clips.push(meta);
+      } catch {
+        this.logger.warn(`Failed to load scroll clip metadata: ${jsonFile}`);
+      }
+    }
+
+    return clips;
+  }
+
+  /**
+   * Get a click sound effect event at the given clip-relative time.
+   *
+   * When typed clip libraries are present (left/ right/ double/ subdirs),
+   * the appropriate pool is used and the event timeOffset is adjusted so
+   * the click transient aligns with the moment of the browser click.
+   *
+   * Falls back to the legacy flat-WAV pool if no typed clips exist.
+   *
+   * @param timeOffset  Clip-relative time (seconds) when the click happens
+   * @param clickType   Button pressed (default 'left')
+   */
+  getClickSfx(timeOffset: number, clickType: ClickButtonType = 'left'): SfxEvent | null {
+    if (!this.config.mouseClick.enabled) return null;
+
+    // Typed-clip path
+    const pool = clickType === 'right' ? this.rightClickClips
+      : clickType === 'double' ? this.doubleClickClips
+      : this.leftClickClips;
+
+    if (pool.length > 0) {
+      const prev = this.lastClickIndex[clickType];
+      const next = (prev + 1 + Math.floor(Math.random() * Math.max(1, pool.length - 1))) % pool.length;
+      this.lastClickIndex[clickType] = next;
+      const clip = pool[next];
+
+      // Shift start time so the click transient lands on timeOffset
+      const adjustedOffset = Math.max(0, timeOffset - clip.clickSignalMs / 1000);
+      return {
+        timeOffset: adjustedOffset,
+        type: 'click',
+        audioFile: clip.audioFile,
+        durationSeconds: clip.durationMs / 1000,
+      };
+    }
+
+    // Legacy flat-WAV fallback
+    if (this.clickSamples.length === 0) return null;
+    const prev = this.lastClickIndex['left'];
+    const index = (prev + 1 + Math.floor(Math.random() * Math.max(1, this.clickSamples.length - 1))) % this.clickSamples.length;
+    this.lastClickIndex['left'] = index;
     return {
       timeOffset,
       type: 'click',
       audioFile: this.clickSamples[index],
-      durationSeconds: 0.3, // Click sounds are typically short
+      durationSeconds: 0.3,
+    };
+  }
+
+  /**
+   * Get a scroll sound effect event matching the requested distance and direction.
+   *
+   * Selects the clip whose totalDeltaY is closest to targetDeltaY; if no
+   * clips exist or scroll SFX is disabled, returns null.
+   *
+   * The returned clip is used by the caller both for audio placement AND to
+   * drive the browser's wheel events (via ScrollClipMeta.events).
+   *
+   * @param targetDeltaY  Absolute pixels to scroll (always positive)
+   * @param direction     'down' or 'up'
+   * @param timeOffset    Clip-relative time when the scroll starts
+   */
+  getScrollSfx(
+    targetDeltaY: number,
+    direction: 'down' | 'up',
+    timeOffset: number
+  ): { event: SfxEvent; clip: ScrollClipMeta } | null {
+    if (!this.config.mouseScroll?.enabled || this.scrollClips.length === 0) return null;
+
+    // Prefer matching direction; fall back to any direction if needed
+    const directionMatch = this.scrollClips.filter((c) => c.direction === direction);
+    const pool = directionMatch.length > 0 ? directionMatch : this.scrollClips;
+
+    // Closest totalDeltaY to the requested distance
+    const best = pool.reduce((prev, curr) =>
+      Math.abs(curr.totalDeltaY - targetDeltaY) < Math.abs(prev.totalDeltaY - targetDeltaY)
+        ? curr : prev
+    );
+
+    return {
+      event: {
+        timeOffset,
+        type: 'scroll',
+        audioFile: best.audioFile,
+        durationSeconds: best.durationMs / 1000,
+      },
+      clip: best,
     };
   }
 

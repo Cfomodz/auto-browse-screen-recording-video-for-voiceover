@@ -1,5 +1,5 @@
 import puppeteer, { Browser, Page } from 'puppeteer-core';
-import { PipelineConfig, SfxEvent, ZoomKeyframe } from '../core/types';
+import { PipelineConfig, SfxEvent, ZoomKeyframe, ClickButtonType } from '../core/types';
 import { MouseAnimator } from './mouse';
 import { TypingAnimator } from './typing-animator';
 import { SfxManager } from '../sfx/manager';
@@ -217,8 +217,27 @@ export class BrowserEngine {
     await humanDelay(1000, 2000);
   }
 
+  /**
+   * Move to (x, y) and click, recording the appropriate SFX event.
+   *
+   * Prefer this over calling browser.mouse.moveAndClick() directly from
+   * modules so that click sounds are always tracked.
+   */
+  async clickAt(
+    x: number,
+    y: number,
+    clickType: ClickButtonType = 'left',
+    options?: { durationMs?: number }
+  ): Promise<void> {
+    await this.mouse.moveAndClick(x, y, options);
+    if (this.sfxManager) {
+      const sfx = this.sfxManager.getClickSfx(this.getClipTimeOffset(), clickType);
+      if (sfx) this._clipSfxEvents.push(sfx);
+    }
+  }
+
   /** Click an element by selector with mouse animation. */
-  async clickElement(selector: string): Promise<boolean> {
+  async clickElement(selector: string, clickType: ClickButtonType = 'left'): Promise<boolean> {
     try {
       const el = await this.page.$(selector);
       if (!el) return false;
@@ -226,21 +245,35 @@ export class BrowserEngine {
       const box = await el.boundingBox();
       if (!box) return false;
 
-      await this.mouse.moveAndClick(
-        box.x + box.width / 2,
-        box.y + box.height / 2
-      );
-
-      // Record click SFX
-      if (this.sfxManager) {
-        const clickSfx = this.sfxManager.getClickSfx(this.getClipTimeOffset());
-        if (clickSfx) this._clipSfxEvents.push(clickSfx);
-      }
-
+      await this.clickAt(box.x + box.width / 2, box.y + box.height / 2, clickType);
       return true;
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Scroll the page with SFX audio-cadence when a matching scroll clip exists,
+   * otherwise fall back to smooth synthetic scrolling.
+   *
+   * @param pixels     Total pixels to scroll (positive = down, negative = up)
+   * @param durationMs Fallback duration when no scroll clip is available
+   */
+  async smoothScroll(pixels: number, durationMs: number = 2000): Promise<void> {
+    const direction = pixels >= 0 ? 'down' as const : 'up' as const;
+
+    if (this.sfxManager) {
+      const result = this.sfxManager.getScrollSfx(Math.abs(pixels), direction, this.getClipTimeOffset());
+      if (result) {
+        this._clipSfxEvents.push(result.event);
+        // Reverse the clip events when scrolling in the opposite direction of the recording
+        const reverseDirection = result.clip.direction !== direction;
+        await this.mouse.scrollWithAudioCadence(result.clip.events, reverseDirection);
+        return;
+      }
+    }
+
+    await this.mouse.smoothScroll(pixels, durationMs);
   }
 
   async close(): Promise<void> {

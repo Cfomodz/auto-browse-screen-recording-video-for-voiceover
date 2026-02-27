@@ -80,7 +80,11 @@ export interface SfxConfig {
   volume: number;
   mouseClick: {
     enabled: boolean;
-    /** Subdirectory within libraryPath for click sounds. */
+    /**
+     * Subdirectory within libraryPath for click sounds.
+     * May contain flat WAV files (legacy) or left/ right/ double/ subdirs
+     * each holding ClickClipMeta JSON sidecars alongside audio files.
+     */
     samplesDir: string;
   };
   keyboardTyping: {
@@ -89,6 +93,11 @@ export interface SfxConfig {
     samplesDir: string;
     /** Loudness target in LUFS when extracting clips from sessions (default -14; -10 is louder). */
     targetLUFS?: number;
+  };
+  mouseScroll?: {
+    enabled: boolean;
+    /** Subdirectory within libraryPath for scroll sounds (ScrollClipMeta JSON sidecars). */
+    samplesDir: string;
   };
 }
 
@@ -189,11 +198,64 @@ export interface SfxEvent {
   /** Time offset in seconds from the start of the clip. */
   timeOffset: number;
   /** Type of sound effect. */
-  type: 'click' | 'typing';
+  type: 'click' | 'typing' | 'scroll';
   /** Path to the audio sample file. */
   audioFile: string;
   /** Duration of this SFX clip in seconds. */
   durationSeconds: number;
+}
+
+// ─── Click SFX ──────────────────────────────────────────────────────────────
+
+/** Mouse button type for click SFX classification. */
+export type ClickButtonType = 'left' | 'right' | 'double';
+
+/**
+ * Metadata for a pre-recorded click audio clip.
+ * Stored alongside the audio file as a .json sidecar.
+ *
+ * clickSignalMs is the key alignment field: it tells the playback engine
+ * how far into the audio the actual click transient lands so the SfxEvent
+ * timeOffset can be shifted backward by that amount, placing the click
+ * sound precisely on the moment the browser fires the click action.
+ */
+export interface ClickClipMeta {
+  audioFile: string;
+  durationMs: number;
+  clickType: ClickButtonType;
+  /** Ms from the start of the audio file to the click transient. */
+  clickSignalMs: number;
+}
+
+// ─── Scroll SFX ─────────────────────────────────────────────────────────────
+
+/**
+ * A single wheel event captured during a scroll recording session.
+ * timestampMs is relative to the start of the audio clip.
+ */
+export interface ScrollEvent {
+  /** Scroll delta in pixels (positive = down, negative = up). */
+  deltaY: number;
+  /** Ms from start of audio clip when this wheel event was received. */
+  timestampMs: number;
+}
+
+/**
+ * Metadata for a pre-recorded scroll audio clip.
+ * Stored alongside the audio file as a .json sidecar.
+ *
+ * The events array drives browser scroll automation: the playback engine
+ * replays each wheel event at its timestampMs offset, making the visual
+ * scroll velocity and rhythm match the recorded trackpad gesture.
+ */
+export interface ScrollClipMeta {
+  audioFile: string;
+  durationMs: number;
+  /** Sum of all deltaY values (absolute pixels, always positive). */
+  totalDeltaY: number;
+  direction: 'down' | 'up';
+  /** Ordered wheel events with exact timing. */
+  events: ScrollEvent[];
 }
 
 /** Result of the full pipeline run. */

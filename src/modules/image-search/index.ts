@@ -68,7 +68,7 @@ export class ImageSearchModule extends BrollModule {
     // Slowly scroll through the image grid
     for (let i = 0; i < 5; i++) {
       await humanDelay(1500, 2500);
-      await browser.mouse.smoothScroll(200 + Math.random() * 150, 2500);
+      await browser.smoothScroll(200 + Math.random() * 150, 2500);
     }
 
     // Hover over some images — zoom to each one briefly
@@ -76,7 +76,7 @@ export class ImageSearchModule extends BrollModule {
 
     // Scroll back up a bit, pull back to full
     zoomKeyframes.push(ZoomPresets.fullWindow(elapsed()));
-    await browser.mouse.smoothScroll(-200, 1500);
+    await browser.smoothScroll(-200, 1500);
     await humanDelay(500, 1000);
 
     const durationSeconds = elapsed();
@@ -112,7 +112,7 @@ export class ImageSearchModule extends BrollModule {
       if (text === 'Images') {
         const box = await link.boundingBox();
         if (box) {
-          await browser.mouse.moveAndClick(
+          await browser.clickAt(
             box.x + box.width / 2,
             box.y + box.height / 2
           );
