@@ -1,9 +1,9 @@
 {
-  "transcriptPath": "./transcript.srt",
-  "audioPath": "./voiceover.mp3",
-  "outputDir": "./output",
+  "transcriptPath": "./drive-or-walk-transcript.srt",
+  "audioPath": "./drive or walk to car wash.mp3",
+  "outputDir": "./output-car-wash",
   "viewport": { "width": 1920, "height": 1080 },
-  "browserExecutablePath": "/usr/bin/google-chrome",
+  "browserExecutablePath": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
   "searchEngine": "google",
   "llm": {
     "provider": "deepseek",
@@ -25,15 +25,8 @@
     "enabled": false,
     "libraryPath": "./sfx-library",
     "volume": 0.4,
-    "mouseClick": {
-      "enabled": true,
-      "samplesDir": "clicks"
-    },
-    "keyboardTyping": {
-      "enabled": true,
-      "samplesDir": "typing",
-      "targetLUFS": -10
-    }
+    "mouseClick": { "enabled": true, "samplesDir": "clicks" },
+    "keyboardTyping": { "enabled": true, "samplesDir": "typing", "targetLUFS": -10 }
   },
   "camera": {
     "enabled": true,

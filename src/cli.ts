@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import 'dotenv/config';
+
 import { Command } from 'commander';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -21,8 +23,12 @@ program
   .command('run')
   .description('Run the full B-roll generation pipeline')
   .requiredOption('-c, --config <path>', 'Path to pipeline config JSON file')
+  .option('--debug', 'Enable debug logging')
+  .option('--no-cache-topics', 'Force re-analyze transcript (ignore cached topics)')
   .action(async (opts) => {
     try {
+      if (opts.debug) process.env.DEBUG = '1';
+
       const configPath = path.resolve(opts.config);
       if (!fs.existsSync(configPath)) {
         logger.error(`Config file not found: ${configPath}`);
@@ -55,6 +61,9 @@ program
               `  Done (${event.segment.durationSeconds.toFixed(1)}s) -> ${event.segment.filePath}`
             );
             break;
+          case 'recording-skip':
+            logger.info(`  Skipped (existing clip) -> ${event.segment.filePath}`);
+            break;
           case 'assembly-start':
             logger.info('Assembling final video...');
             break;
@@ -67,7 +76,9 @@ program
         }
       });
 
-      const result = await pipeline.run();
+      const result = await pipeline.run({
+        noCacheTopics: opts.noCacheTopics === true || opts.cacheTopics === false,
+      });
       logger.info(
         `Pipeline complete. ${result.segments.length} segments, ` +
         `total duration: ${formatTime(result.durationSeconds)}`
@@ -75,6 +86,158 @@ program
       logger.info(`Final video: ${result.outputPath}`);
     } catch (err) {
       logger.error(`Pipeline failed: ${err}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('run-one')
+  .description(
+    'Run a single module for a single concept (no assembly). Debug enabled by default. Use --list-topics to see indices.'
+  )
+  .requiredOption('-c, --config <path>', 'Path to pipeline config JSON file')
+  .option(
+    '--topic-index <n>',
+    'Topic index (0-based). Use --list-topics to see indices.',
+    (v) => parseInt(v, 10)
+  )
+  .option(
+    '--topic <string>',
+    'Topic name (partial match). Ignored if --topic-index is set.'
+  )
+  .option(
+    '--action <type>',
+    'Module to run: web-search | news-search | definition-search | image-search (required unless --list-topics)'
+  )
+  .option('--list-topics', 'List topics with indices and exit')
+  .option('--debug', 'Enable debug logging (default: on for run-one)')
+  .option('--no-cache-topics', 'Force re-analyze transcript')
+  .action(async (opts) => {
+    try {
+      process.env.DEBUG = '1';
+      if (opts.debug === false) delete process.env.DEBUG;
+      else if (opts.debug) process.env.DEBUG = '1';
+
+      const configPath = path.resolve(opts.config);
+      if (!fs.existsSync(configPath)) {
+        logger.error(`Config file not found: ${configPath}`);
+        process.exit(1);
+      }
+
+      const rawConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+      const config = resolveConfig(rawConfig, path.dirname(configPath));
+      const pipeline = new Pipeline(config);
+
+      const topics = await pipeline.getTopics({
+        noCacheTopics: opts.noCacheTopics === true || opts.cacheTopics === false,
+      });
+
+      if (opts.listTopics) {
+        logger.info(`Topics (use --topic-index N with run-one):`);
+        topics.forEach((t, i) => {
+          console.log(`  ${i}: ${t.topic}`);
+          console.log(`     ${t.suggestedActions.join(', ')}`);
+        });
+        return;
+      }
+
+      const validActions = ['web-search', 'news-search', 'definition-search', 'image-search'];
+      const actionType = opts.action as string | undefined;
+      if (!actionType || !validActions.includes(actionType)) {
+        logger.error(`--action required (unless --list-topics). Use one of: ${validActions.join(', ')}`);
+        process.exit(1);
+      }
+
+      let topicIndex: number;
+      if (opts.topicIndex !== undefined && !Number.isNaN(opts.topicIndex)) {
+        topicIndex = opts.topicIndex;
+      } else if (opts.topic && typeof opts.topic === 'string') {
+        const needle = (opts.topic as string).toLowerCase();
+        const i = topics.findIndex((t) => t.topic.toLowerCase().includes(needle));
+        if (i === -1) {
+          logger.error(`No topic matching "${opts.topic}". Use --list-topics to see topics.`);
+          process.exit(1);
+        }
+        topicIndex = i;
+        logger.info(`Matched topic index ${topicIndex}: "${topics[i].topic}"`);
+      } else {
+        logger.error('Provide --topic-index <n> or --topic <name>. Use --list-topics to see options.');
+        process.exit(1);
+      }
+
+      pipeline.on('event', (event) => {
+        switch (event.type) {
+          case 'recording-start':
+            logger.info(`Recording [${event.action}]: "${event.topic.topic}"`);
+            break;
+          case 'recording-complete':
+            logger.info(`Done (${event.segment.durationSeconds.toFixed(1)}s) -> ${event.segment.filePath}`);
+            break;
+          case 'recording-skip':
+            logger.info(`Skipped (existing) -> ${event.segment.filePath}`);
+            break;
+          default:
+            break;
+        }
+      });
+
+      const segment = await pipeline.runOne({
+        topicIndex,
+        action: actionType as 'web-search' | 'news-search' | 'definition-search' | 'image-search',
+        noCacheTopics: opts.noCacheTopics === true || opts.cacheTopics === false,
+      });
+      logger.info(`Clip: ${segment.filePath}`);
+    } catch (err) {
+      logger.error(`run-one failed: ${err}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('transcribe')
+  .description('Transcribe an audio file to SRT using OpenAI Whisper (requires OPENAI_API_KEY)')
+  .requiredOption('-i, --input <path>', 'Path to audio file (MP3, WAV, M4A, etc.)')
+  .option('-o, --output <path>', 'Output SRT path (default: same name as input with .srt)')
+  .option('--force', 'Overwrite existing transcript (default: skip if output exists and is newer than input)')
+  .action(async (opts) => {
+    try {
+      const OpenAI = (await import('openai')).default;
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) {
+        logger.error('OPENAI_API_KEY environment variable is required for transcribe.');
+        process.exit(1);
+      }
+      const inputPath = path.resolve(opts.input);
+      if (!fs.existsSync(inputPath)) {
+        logger.error(`Input file not found: ${inputPath}`);
+        process.exit(1);
+      }
+      const outputPath = opts.output
+        ? path.resolve(opts.output)
+        : inputPath.replace(/\.[^.]+$/i, '.srt');
+      if (!opts.force && fs.existsSync(outputPath)) {
+        const outStat = fs.statSync(outputPath);
+        const inStat = fs.statSync(inputPath);
+        if (outStat.mtime >= inStat.mtime) {
+          logger.info(
+            `Transcript already exists and is newer than audio; skipping. Use --force to overwrite.`
+          );
+          logger.info(`  ${outputPath}`);
+          return;
+        }
+      }
+      logger.info(`Transcribing: ${inputPath}`);
+      const openai = new OpenAI({ apiKey });
+      const transcription = await openai.audio.transcriptions.create({
+        file: fs.createReadStream(inputPath) as unknown as File,
+        model: 'whisper-1',
+        response_format: 'srt',
+      });
+      const srtContent = typeof transcription === 'string' ? transcription : String((transcription as { text?: string }).text ?? '');
+      fs.writeFileSync(outputPath, srtContent, 'utf-8');
+      logger.info(`Wrote transcript: ${outputPath}`);
+    } catch (err) {
+      logger.error(`Transcription failed: ${err}`);
       process.exit(1);
     }
   });
@@ -125,7 +288,6 @@ program
       searchEngine: 'google',
       llm: {
         provider: 'deepseek',
-        apiKey: 'YOUR_API_KEY_HERE',
         model: 'deepseek-chat',
       },
       modules: {
@@ -451,13 +613,32 @@ program
     }
   });
 
-/** Resolve relative paths in config relative to the config file's directory. */
+/** Resolve relative paths and API keys (from .env) relative to the config file's directory. */
 function resolveConfig(raw: PipelineConfig, baseDir: string): PipelineConfig {
+  const envKey =
+    raw.llm.provider === 'deepseek'
+      ? process.env.DEEPSEEK_API_KEY
+      : process.env.OPENAI_API_KEY;
+  const llmApiKey =
+    raw.llm.apiKey &&
+    !/^YOUR[_ ]?(DEEPSEEK|OPENAI)?[_ ]?API[_ ]?KEY/i.test(raw.llm.apiKey)
+      ? raw.llm.apiKey
+      : envKey;
+
+  if (!llmApiKey?.trim()) {
+    const varName =
+      raw.llm.provider === 'deepseek' ? 'DEEPSEEK_API_KEY' : 'OPENAI_API_KEY';
+    throw new Error(
+      `LLM API key required. Set ${varName} in .env (or llm.apiKey in config).`
+    );
+  }
+
   return {
     ...raw,
     transcriptPath: path.resolve(baseDir, raw.transcriptPath),
     audioPath: path.resolve(baseDir, raw.audioPath),
     outputDir: path.resolve(baseDir, raw.outputDir),
+    llm: { ...raw.llm, apiKey: llmApiKey },
   };
 }
 

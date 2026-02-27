@@ -6,3 +6,4 @@ dist/
 *.avi
 recordings/
 output/
+output*/

@@ -47,10 +47,10 @@ export interface PipelineConfig {
   browserExecutablePath?: string;
   /** Which search engine to use. */
   searchEngine: 'google' | 'brave' | 'duckduckgo';
-  /** LLM provider config for transcript analysis. */
+  /** LLM provider config for transcript analysis. API key from .env (DEEPSEEK_API_KEY / OPENAI_API_KEY) if not in config. */
   llm: {
     provider: 'deepseek' | 'openai';
-    apiKey: string;
+    apiKey?: string;
     model?: string;
   };
   /** Per-module configuration. */
@@ -207,6 +207,7 @@ export type PipelineEvent =
   | { type: 'analysis-complete'; topics: ExtractedTopic[] }
   | { type: 'recording-start'; topic: ExtractedTopic; action: ModuleActionType }
   | { type: 'recording-complete'; segment: RecordedSegment }
+  | { type: 'recording-skip'; segment: RecordedSegment }
   | { type: 'assembly-start' }
   | { type: 'assembly-complete'; outputPath: string }
   | { type: 'error'; message: string; error?: Error };
