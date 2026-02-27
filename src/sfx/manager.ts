@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { SfxConfig, SfxEvent, TypingClipMeta } from '../core/types';
+import { SfxConfig, SfxEvent, KeystrokeEvent, TypingClipMeta } from '../core/types';
 import { Logger } from '../utils/logger';
 
 /**
@@ -173,6 +173,31 @@ export class SfxManager {
         durationSeconds: best.clip.durationMs / 1000,
       },
       keystrokes: best.clip,
+    };
+  }
+
+  /**
+   * Find the best matching typing audio clip and return both the SFX event
+   * and the raw keystroke timing data for driving visual typing cadence.
+   *
+   * This is the primary entry point used by TypingAnimator — the returned
+   * keystrokes array provides the exact timestamps that should be used
+   * to pace the visual character typing so it matches the audio.
+   *
+   * @param text        The text that will be "typed" in the browser
+   * @param timeOffset  When this typing starts in the clip (seconds)
+   * @returns SfxEvent, keystroke timing data, or null if no clips available
+   */
+  getTypingSfxWithKeystrokes(
+    text: string,
+    timeOffset: number
+  ): { event: SfxEvent; keystrokes: KeystrokeEvent[] } | null {
+    const result = this.getTypingSfx(text, timeOffset);
+    if (!result) return null;
+
+    return {
+      event: result.event,
+      keystrokes: result.keystrokes.keystrokes,
     };
   }
 

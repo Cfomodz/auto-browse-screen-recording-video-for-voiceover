@@ -24,8 +24,9 @@ interface KeystrokePlan {
  * - Occasional typos followed by backspace corrections
  * - Burst speed for familiar short words, slower for unusual words
  *
- * When SFX is enabled, coordinates with pre-recorded typing audio clips
- * to synchronize the visual keystrokes with the audio.
+ * When SFX is enabled, the audio clip is selected first and its real
+ * keystroke timestamps drive the cadence of the visual typing — what
+ * you see on screen matches what you hear in the audio.
  */
 export class TypingAnimator {
   private config: TypingConfig;
@@ -41,6 +42,15 @@ export class TypingAnimator {
   /**
    * Type a string into the current page with realistic animation.
    *
+   * When SFX typing clips are available, the audio clip is selected
+   * first and its keystroke timestamps drive the visual typing cadence.
+   * Each character is typed at the time the corresponding keystroke
+   * was heard in the recording, creating a 1:1 match between the
+   * visual typing and the audio.
+   *
+   * When no SFX clips are available, falls back to the built-in
+   * keystroke plan with gaussian-distributed timing.
+   *
    * @param page           Puppeteer page
    * @param text           Text to type
    * @param clipTimeOffset Current time offset into the recording clip (for SFX sync)
@@ -51,16 +61,28 @@ export class TypingAnimator {
     text: string,
     clipTimeOffset: number = 0
   ): Promise<{ durationMs: number; sfxEvents: SfxEvent[] }> {
-    const plan = this.buildKeystrokePlan(text);
     const sfxEvents: SfxEvent[] = [];
 
-    // If we have typing audio, try to get a matching clip for the text
+    // Try audio-driven typing first: select SFX clips, then use their
+    // keystroke timestamps to drive the visual cadence
     if (this.sfxManager) {
-      const typingSfx = this.sfxManager.buildTypingTimeline(text, clipTimeOffset / 1000);
-      sfxEvents.push(...typingSfx);
+      const audioResult = this.sfxManager.getTypingSfxWithKeystrokes(text, clipTimeOffset / 1000);
+      if (audioResult && audioResult.keystrokes.length > 0) {
+        sfxEvents.push(audioResult.event);
+        const durationMs = await this.typeWithAudioCadence(
+          page,
+          text,
+          audioResult.keystrokes
+        );
+        this.logger.info(
+          `Audio-driven typing: ${text.length} chars in ${(durationMs / 1000).toFixed(1)}s`
+        );
+        return { durationMs, sfxEvents };
+      }
     }
 
-    // Execute the keystroke plan
+    // Fallback: use the built-in keystroke plan (no audio)
+    const plan = this.buildKeystrokePlan(text);
     let totalMs = 0;
     for (const stroke of plan) {
       await delay(stroke.delayBeforeMs);
@@ -75,10 +97,64 @@ export class TypingAnimator {
 
     this.logger.info(
       `Typed ${text.length} chars in ${(totalMs / 1000).toFixed(1)}s ` +
-      `(${plan.filter((s) => s.isMistake).length} mistakes)`
+      `(${plan.filter((s) => s.isMistake).length} mistakes, fallback timing)`
     );
 
     return { durationMs: totalMs, sfxEvents };
+  }
+
+  /**
+   * Type characters using the audio clip's keystroke timestamps for cadence.
+   *
+   * Maps each character of `text` to a keystroke event from the audio clip,
+   * using the time deltas between consecutive keystrokes as the delay between
+   * typing each character. This creates a 1:1 correspondence between the
+   * visual typing and the audio.
+   *
+   * @returns Total duration in milliseconds
+   */
+  async typeWithAudioCadence(
+    page: Page,
+    text: string,
+    audioKeystrokes: KeystrokeEvent[]
+  ): Promise<number> {
+    const textChars = text.split('');
+    let totalMs = 0;
+
+    for (let i = 0; i < textChars.length; i++) {
+      // Compute delay from the audio keystroke timestamps
+      let delayMs: number;
+      if (i < audioKeystrokes.length) {
+        if (i === 0) {
+          // First keystroke: use the timestamp directly as initial delay
+          delayMs = Math.max(audioKeystrokes[0].timestampMs, 20);
+        } else {
+          // Subsequent keystrokes: use delta between consecutive timestamps
+          delayMs = Math.max(
+            audioKeystrokes[i].timestampMs - audioKeystrokes[i - 1].timestampMs,
+            20
+          );
+        }
+      } else {
+        // More text chars than audio keystrokes: use average cadence from clip
+        const avgDelay = audioKeystrokes.length > 1
+          ? audioKeystrokes[audioKeystrokes.length - 1].timestampMs / (audioKeystrokes.length - 1)
+          : this.config.baseDelayMs;
+        delayMs = avgDelay;
+      }
+
+      await delay(delayMs);
+      totalMs += delayMs;
+
+      const char = textChars[i];
+      if (char === ' ') {
+        await page.keyboard.press('Space');
+      } else {
+        await page.keyboard.type(char, { delay: 0 });
+      }
+    }
+
+    return totalMs;
   }
 
   /**

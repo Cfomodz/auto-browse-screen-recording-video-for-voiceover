@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { TypingAnimator } from '../../src/browser/typing-animator';
-import { TypingConfig } from '../../src/core/types';
+import { TypingConfig, KeystrokeEvent } from '../../src/core/types';
 import { createLogger } from '../../src/utils/logger';
 
 const logger = createLogger('test');
@@ -150,6 +150,117 @@ describe('TypingAnimator', () => {
         }
       }
       expect(result).toBe(original);
+    });
+  });
+
+  describe('typeWithAudioCadence', () => {
+    it('uses audio keystroke timestamps to determine typing delays', async () => {
+      const animator = new TypingAnimator(makeConfig(), logger);
+
+      // Audio keystrokes at known timestamps
+      const audioKeystrokes: KeystrokeEvent[] = [
+        { key: 'h', timestampMs: 50 },
+        { key: 'i', timestampMs: 200 },
+      ];
+
+      // Mock page with keyboard tracking
+      const typedKeys: string[] = [];
+      const mockPage = {
+        keyboard: {
+          type: async (key: string, _opts?: { delay: number }) => { typedKeys.push(key); },
+          press: async (key: string) => { typedKeys.push(key); },
+        },
+      } as any;
+
+      const durationMs = await animator.typeWithAudioCadence(mockPage, 'hi', audioKeystrokes);
+
+      // The delay for 'h' is 50ms (first keystroke timestamp), for 'i' is 150ms (200-50)
+      // Total should be >= 200ms (50 + 150)
+      expect(durationMs).toBeGreaterThanOrEqual(150);
+      expect(typedKeys).toEqual(['h', 'i']);
+    });
+
+    it('handles more text chars than audio keystrokes gracefully', async () => {
+      const animator = new TypingAnimator(makeConfig(), logger);
+
+      // Only 2 keystrokes for 5 chars
+      const audioKeystrokes: KeystrokeEvent[] = [
+        { key: 'h', timestampMs: 0 },
+        { key: 'e', timestampMs: 100 },
+      ];
+
+      const typedKeys: string[] = [];
+      const mockPage = {
+        keyboard: {
+          type: async (key: string, _opts?: { delay: number }) => { typedKeys.push(key); },
+          press: async (key: string) => { typedKeys.push(key); },
+        },
+      } as any;
+
+      const durationMs = await animator.typeWithAudioCadence(mockPage, 'hello', audioKeystrokes);
+
+      // Should type all 5 chars even though we only have 2 keystroke timestamps
+      expect(typedKeys).toHaveLength(5);
+      expect(typedKeys.join('')).toBe('hello');
+      expect(durationMs).toBeGreaterThan(0);
+    });
+
+    it('presses Space for space characters', async () => {
+      const animator = new TypingAnimator(makeConfig(), logger);
+
+      const audioKeystrokes: KeystrokeEvent[] = [
+        { key: 'h', timestampMs: 20 },
+        { key: 'i', timestampMs: 100 },
+        { key: 'space', timestampMs: 200 },
+        { key: 'y', timestampMs: 350 },
+        { key: 'o', timestampMs: 450 },
+      ];
+
+      const pressedKeys: string[] = [];
+      const typedKeys: string[] = [];
+      const mockPage = {
+        keyboard: {
+          type: async (key: string, _opts?: { delay: number }) => { typedKeys.push(key); },
+          press: async (key: string) => { pressedKeys.push(key); },
+        },
+      } as any;
+
+      await animator.typeWithAudioCadence(mockPage, 'hi yo', audioKeystrokes);
+
+      // Space should be pressed via keyboard.press('Space')
+      expect(pressedKeys).toContain('Space');
+      // Non-space chars should be typed via keyboard.type
+      expect(typedKeys).toEqual(['h', 'i', 'y', 'o']);
+    });
+
+    it('total duration matches audio clip duration', async () => {
+      const animator = new TypingAnimator(makeConfig(), logger);
+
+      // Simulate a real audio clip with ~1 second of typing
+      const audioKeystrokes: KeystrokeEvent[] = [
+        { key: 'c', timestampMs: 50 },
+        { key: 'a', timestampMs: 180 },
+        { key: 'r', timestampMs: 340 },
+        { key: 'space', timestampMs: 500 },
+        { key: 'w', timestampMs: 680 },
+        { key: 'a', timestampMs: 810 },
+        { key: 's', timestampMs: 950 },
+        { key: 'h', timestampMs: 1100 },
+      ];
+
+      const mockPage = {
+        keyboard: {
+          type: async (_k: string, _o?: { delay: number }) => {},
+          press: async (_k: string) => {},
+        },
+      } as any;
+
+      const durationMs = await animator.typeWithAudioCadence(mockPage, 'car wash', audioKeystrokes);
+
+      // Duration should be close to the last keystroke timestamp (1100ms)
+      // Allow some margin for the minimum delay clamping (20ms per key)
+      expect(durationMs).toBeGreaterThan(800);
+      expect(durationMs).toBeLessThan(2000);
     });
   });
 });

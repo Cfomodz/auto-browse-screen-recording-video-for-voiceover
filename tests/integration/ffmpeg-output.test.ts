@@ -534,6 +534,112 @@ describe('End-to-end assembly simulation', () => {
   });
 });
 
+describe('Clip duration and audio requirements', () => {
+  it('assembled clip from screen recording frames is longer than 1 second', () => {
+    // Simulate a screen recording that captures 3 seconds of frames at 30fps
+    const clipDir = path.join(tmpDir, 'clip_duration_test');
+    fs.mkdirSync(clipDir, { recursive: true });
+
+    // Generate enough frames for a 3-second clip (90 frames at 30fps)
+    const frameCount = 90;
+    for (let i = 0; i < frameCount; i++) {
+      // Create minimal valid PNG frames using FFmpeg (1 frame each)
+      const framePath = path.join(clipDir, `frame_${String(i).padStart(6, '0')}.png`);
+      const result = child_process.spawnSync('ffmpeg', [
+        '-f', 'lavfi',
+        '-i', `color=c=blue:s=320x240:d=0.033`,
+        '-frames:v', '1',
+        '-y', framePath,
+      ], { encoding: 'utf-8', timeout: 5000 });
+      expect(result.status).toBe(0);
+    }
+
+    // Assemble frames into video (like ScreenRecorder.assembleFrames does)
+    const outputPath = path.join(tmpDir, 'clip_duration_output.mp4');
+    const result = child_process.spawnSync('ffmpeg', [
+      '-framerate', '30',
+      '-i', path.join(clipDir, 'frame_%06d.png'),
+      '-c:v', 'libx264',
+      '-pix_fmt', 'yuv420p',
+      '-r', '30',
+      '-preset', 'ultrafast',
+      '-y', outputPath,
+    ], { encoding: 'utf-8', timeout: 30000 });
+
+    expect(result.status).toBe(0);
+    assertFileExists(outputPath, 1000);
+
+    // CRITICAL ASSERTION: clip must be longer than 1 second
+    const probe = ffprobe(outputPath);
+    const duration = parseFloat(probe.format.duration);
+    expect(duration).toBeGreaterThan(1);
+  });
+
+  it('clip with SFX audio has an audio stream that is not silent', () => {
+    // Generate a video clip (simulating a screen recording)
+    const videoPath = path.join(tmpDir, 'audio_check_video.mp4');
+    generateTestVideo(videoPath, { durationSec: 4, width: 640, height: 480 });
+
+    // Generate typing SFX audio (simulating what buildSfxTrack produces)
+    const typingSfx = path.join(tmpDir, 'audio_check_typing.wav');
+    generateTestTone(typingSfx, { durationSec: 2, frequency: 800 });
+
+    // Build an SFX track with the typing audio at 0.5s offset
+    const sfxTrack = path.join(tmpDir, 'audio_check_sfx.wav');
+    let result = child_process.spawnSync('ffmpeg', [
+      '-i', typingSfx,
+      '-af', 'adelay=500|500,volume=0.5',
+      '-c:a', 'pcm_s16le',
+      '-y', sfxTrack,
+    ], { encoding: 'utf-8', timeout: 15000 });
+    expect(result.status).toBe(0);
+
+    // Mux video + SFX audio together (like VideoAssembler does)
+    const muxedPath = path.join(tmpDir, 'audio_check_output.mp4');
+    result = child_process.spawnSync('ffmpeg', [
+      '-i', videoPath,
+      '-i', sfxTrack,
+      '-c:v', 'copy',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-shortest',
+      '-map', '0:v:0',
+      '-map', '1:a:0',
+      '-y', muxedPath,
+    ], { encoding: 'utf-8', timeout: 30000 });
+
+    expect(result.status).toBe(0);
+    assertFileExists(muxedPath, 1000);
+
+    // CRITICAL ASSERTION: the output must have an audio stream
+    const probe = ffprobe(muxedPath);
+    const audioStream = probe.streams.find((s) => s.codec_type === 'audio');
+    expect(audioStream).toBeDefined();
+
+    // CRITICAL ASSERTION: the audio must not be silent
+    const content = audioHasContent(muxedPath);
+    expect(content.isSilent).toBe(false);
+    expect(content.peakDb).toBeGreaterThan(-30);
+  });
+
+  it('video-only clip (no SFX) has no audio stream', () => {
+    // Generate a video-only clip (like screen recorder produces before assembly)
+    const videoPath = path.join(tmpDir, 'no_audio_video.mp4');
+    generateTestVideo(videoPath, { durationSec: 2, width: 640, height: 480 });
+
+    const probe = ffprobe(videoPath);
+    const audioStream = probe.streams.find((s) => s.codec_type === 'audio');
+    // Video-only clips from screen recording should NOT have audio
+    expect(audioStream).toBeUndefined();
+
+    // Verify it's a valid video
+    const videoStream = probe.streams.find((s) => s.codec_type === 'video');
+    expect(videoStream).toBeDefined();
+    const duration = parseFloat(probe.format.duration);
+    expect(duration).toBeGreaterThan(1);
+  });
+});
+
 describe('Real SFX library validation', () => {
   const sfxLibraryPath = path.join(
     __dirname, '..', '..', 'sfx-library', 'typing'
