@@ -82,12 +82,16 @@ export class WebSearchModule extends BrollModule {
     await humanDelay(500, 1000);
 
     const durationSeconds = elapsed();
-    this.logger.info(`Web search complete (${durationSeconds.toFixed(1)}s)`);
+    const sfxEvents = browser.collectClipSfxEvents();
+    this.logger.info(
+      `Web search complete (${durationSeconds.toFixed(1)}s, ` +
+      `${sfxEvents.length} SFX events collected)`
+    );
 
     return {
       durationSeconds,
       zoomKeyframes,
-      sfxEvents: browser.collectClipSfxEvents(),
+      sfxEvents,
     };
   }
 }

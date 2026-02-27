@@ -22,7 +22,7 @@
     "format": "mp4"
   },
   "sfx": {
-    "enabled": false,
+    "enabled": true,
     "libraryPath": "./sfx-library",
     "volume": 0.4,
     "mouseClick": { "enabled": true, "samplesDir": "clicks" },

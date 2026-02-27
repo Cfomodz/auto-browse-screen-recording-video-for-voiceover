@@ -208,6 +208,11 @@ export class Pipeline extends EventEmitter {
           };
 
           recordedSegments.push(recorded);
+          this.logger.info(
+            `Clip "${clipName}": ${result.durationSeconds.toFixed(1)}s, ` +
+            `${(result.sfxEvents ?? []).length} SFX events, ` +
+            `${(result.zoomKeyframes ?? []).length} zoom keyframes`
+          );
           this.emit_event({ type: 'recording-complete', segment: recorded });
         }
       }

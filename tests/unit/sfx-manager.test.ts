@@ -204,6 +204,71 @@ describe('SfxManager', () => {
     });
   });
 
+  describe('getTypingSfxWithKeystrokes', () => {
+    beforeEach(() => {
+      const meta: TypingClipMeta = {
+        audioFile: 'clip_with_ks.wav',
+        durationMs: 1000,
+        typedText: 'hello world',
+        wordCount: 2,
+        backspaceSequences: 0,
+        maxConsecutiveBackspaces: 0,
+        keystrokes: [
+          { key: 'h', timestampMs: 0 },
+          { key: 'e', timestampMs: 80 },
+          { key: 'l', timestampMs: 160 },
+          { key: 'l', timestampMs: 240 },
+          { key: 'o', timestampMs: 320 },
+          { key: 'space', timestampMs: 450 },
+          { key: 'w', timestampMs: 550 },
+          { key: 'o', timestampMs: 630 },
+          { key: 'r', timestampMs: 710 },
+          { key: 'l', timestampMs: 790 },
+          { key: 'd', timestampMs: 870 },
+        ],
+      };
+      generateTestTone(path.join(tmpDir, 'typing', 'clip_with_ks.wav'), { durationSec: 1 });
+      writeClipJson(path.join(tmpDir, 'typing'), 'clip_with_ks', meta);
+    });
+
+    it('returns SFX event with keystroke timing data', () => {
+      const manager = new SfxManager(makeSfxConfig(tmpDir), logger);
+      const result = manager.getTypingSfxWithKeystrokes('hello world', 0);
+      expect(result).not.toBeNull();
+      expect(result!.event.type).toBe('typing');
+      expect(result!.keystrokes.length).toBeGreaterThan(0);
+    });
+
+    it('keystroke timestamps are present and ordered', () => {
+      const manager = new SfxManager(makeSfxConfig(tmpDir), logger);
+      const result = manager.getTypingSfxWithKeystrokes('hello world', 0);
+      expect(result).not.toBeNull();
+
+      const keystrokes = result!.keystrokes;
+      expect(keystrokes.length).toBe(11); // 11 chars in "hello world"
+
+      // Timestamps should be monotonically non-decreasing
+      for (let i = 1; i < keystrokes.length; i++) {
+        expect(keystrokes[i].timestampMs).toBeGreaterThanOrEqual(keystrokes[i - 1].timestampMs);
+      }
+    });
+
+    it('returns null when SFX is disabled', () => {
+      const config = makeSfxConfig(tmpDir, {
+        keyboardTyping: { enabled: false, samplesDir: 'typing' },
+      });
+      const manager = new SfxManager(config, logger);
+      const result = manager.getTypingSfxWithKeystrokes('hello', 0);
+      expect(result).toBeNull();
+    });
+
+    it('sets the correct time offset on the event', () => {
+      const manager = new SfxManager(makeSfxConfig(tmpDir), logger);
+      const result = manager.getTypingSfxWithKeystrokes('hello world', 2.5);
+      expect(result!.event.timeOffset).toBe(2.5);
+    });
+  });
+
   describe('buildTypingTimeline', () => {
     beforeEach(() => {
       // Single 2-word clip
