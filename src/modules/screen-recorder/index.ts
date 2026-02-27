@@ -1,4 +1,5 @@
 import { Page, CDPSession } from 'puppeteer-core';
+import * as child_process from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { PipelineConfig } from '../../core/types';
@@ -71,8 +72,13 @@ export class ScreenRecorder {
     this.logger.info(`Recording started: ${clipName}`);
   }
 
-  /** Stop recording and assemble frames into a video file. Returns the output path. */
-  async stopRecording(clipName: string): Promise<string> {
+  /**
+   * Stop recording and assemble frames into a video file. Returns the output path.
+   * @param realDurationSeconds - Elapsed real time for the recording. When provided,
+   * the video is stretched to match real-time via frame duplication (input framerate
+   * = frameCount/realDuration), so SFX and cursor animations stay in sync without scaling.
+   */
+  async stopRecording(clipName: string, realDurationSeconds?: number): Promise<string> {
     this.recording = false;
 
     if (this.cdpSession) {
@@ -87,7 +93,21 @@ export class ScreenRecorder {
 
     this.logger.info(`Recording stopped: ${clipName} (${this.frameCount} frames captured)`);
 
-    const outputPath = path.join(this.config.outputDir, 'clips', `${clipName}.mp4`);
+    // Wait for in-flight screencastFrame handlers to finish writing; verify frames on disk
+    await new Promise((r) => setTimeout(r, 300));
+    const maxWait = 5000;
+    const start = Date.now();
+    while (Date.now() - start < maxWait) {
+      try {
+        const files = fs.readdirSync(this.frameDir).filter((f) => f.endsWith('.png'));
+        if (files.length >= this.frameCount) break;
+      } catch {
+        // frameDir may not exist if no frames; fall through
+      }
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    const outputPath = path.resolve(this.config.outputDir, 'clips', `${clipName}.mp4`);
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 
     if (this.frameCount === 0) {
@@ -97,43 +117,62 @@ export class ScreenRecorder {
     }
 
     // Assemble frames into video using FFmpeg
-    await this.assembleFrames(outputPath);
+    await this.assembleFrames(outputPath, realDurationSeconds);
     return outputPath;
   }
 
-  private assembleFrames(outputPath: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // Dynamic import to avoid hard dependency if ffmpeg not needed yet
-      const ffmpeg = require('fluent-ffmpeg') as typeof import('fluent-ffmpeg');
+  private assembleFrames(outputPath: string, realDurationSeconds?: number): Promise<void> {
+    // Use spawnSync — fluent-ffmpeg can fail on Windows (path/argument handling).
+    // Absolute path with forward slashes for image2 compatibility.
+    const framePattern = path.resolve(this.frameDir, 'frame_%06d.png').replace(/\\/g, '/');
 
-      // Use absolute path with forward slashes — FFmpeg image2 on Windows
-      // can fail with backslashes (e.g. \f in path misparsed)
-      const framePattern = path.resolve(this.frameDir, 'frame_%06d.png').replace(/\\/g, '/');
+    // When real duration is provided, use frameCount/realDuration so video length matches
+    // real time; FFmpeg duplicates frames to reach output fps. Keeps SFX/cursor in sync.
+    const targetFps = this.config.video.fps;
+    const inputFramerate =
+      realDurationSeconds != null &&
+      realDurationSeconds > 0.1
+        ? this.frameCount / realDurationSeconds
+        : targetFps;
 
-      ffmpeg()
-        .input(framePattern)
-        .inputOptions(['-f', 'image2', '-start_number', '0'])
-        .inputFPS(this.config.video.fps)
-        .outputOptions([
-          '-c:v libx264',
-          '-pix_fmt yuv420p',
-          `-r ${this.config.video.fps}`,
-          '-preset fast',
-          '-crf 23',
-        ])
-        .output(outputPath)
-        .on('end', () => {
-          this.logger.info(`Clip assembled: ${outputPath}`);
-          // Clean up frame images
-          this.cleanupFrames();
-          resolve();
-        })
-        .on('error', (err: Error) => {
-          this.logger.error(`FFmpeg error: ${err.message}`);
-          reject(err);
-        })
-        .run();
-    });
+    if (realDurationSeconds != null && realDurationSeconds > 0.1) {
+      this.logger.debug(
+        `Real-time assembly: ${this.frameCount} frames over ${realDurationSeconds.toFixed(1)}s ` +
+          `→ input ${inputFramerate.toFixed(1)}fps, output ${targetFps}fps`
+      );
+    }
+
+    const result = child_process.spawnSync(
+      'ffmpeg',
+      [
+        '-framerate', String(inputFramerate),
+        '-f', 'image2',
+        '-start_number', '0',
+        '-i', framePattern,
+        '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2',
+        '-c:v', 'libx264',
+        '-pix_fmt', 'yuv420p',
+        '-r', String(targetFps),
+        '-preset', 'fast',
+        '-crf', '23',
+        '-y',
+        outputPath,
+      ],
+      { encoding: 'utf-8', timeout: 120000, windowsHide: true }
+    );
+
+    if (result.status !== 0) {
+      const msg = result.stderr?.slice(-800) || result.error?.message || 'Unknown error';
+      this.logger.error(`FFmpeg error: ${msg}`);
+      if (this.logger.level === 'debug') {
+        this.logger.debug(`FFmpeg args: ${JSON.stringify([framePattern, outputPath])}`);
+      }
+      throw new Error(`ffmpeg exited with code ${result.status}: ${msg}`);
+    }
+
+    this.logger.info(`Clip assembled: ${outputPath}`);
+    this.cleanupFrames();
+    return Promise.resolve();
   }
 
   private cleanupFrames(): void {

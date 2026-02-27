@@ -204,7 +204,7 @@ export class Pipeline extends EventEmitter {
             topic
           );
 
-          let filePath = await this.recorder.stopRecording(clipName);
+          let filePath = await this.recorder.stopRecording(clipName, result.durationSeconds);
           let sfxBaked = false;
 
           // Bake SFX into clip for debugging and progressive assembly
@@ -379,7 +379,7 @@ export class Pipeline extends EventEmitter {
       this.emit_event({ type: 'recording-start', topic, action: actionType });
       await this.recorder.startRecording(this.browser.page, clipName);
       const result = await mod.execute(this.browser.page, this.browser, topic);
-      let filePath = await this.recorder.stopRecording(clipName);
+      let filePath = await this.recorder.stopRecording(clipName, result.durationSeconds);
       let sfxBaked = false;
 
       if (
