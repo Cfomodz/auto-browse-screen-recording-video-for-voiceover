@@ -541,6 +541,89 @@ program
   });
 
 program
+  .command('mouse-coverage')
+  .description('Analyze click/scroll SFX library coverage without recording')
+  .option('-o, --output <dir>', 'SFX library root directory', './sfx-library')
+  .option('-c, --config <path>', 'Pipeline config path (default: config.json or broll-config.json in cwd)')
+  .option('--verbose', 'Show all bucket paths')
+  .action(async (opts) => {
+    try {
+      let libraryRoot = path.resolve(opts.output);
+      let clickDir = path.join(libraryRoot, 'clicks');
+      let scrollDir = path.join(libraryRoot, 'scrolls');
+
+      const configPath = opts.config ? path.resolve(opts.config) : getDefaultConfigPath();
+      if (configPath && fs.existsSync(configPath)) {
+        const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        const baseDir = path.dirname(configPath);
+        if (raw.sfx?.libraryPath) {
+          libraryRoot = path.resolve(baseDir, raw.sfx.libraryPath);
+          clickDir = path.join(libraryRoot, raw.sfx?.mouseClick?.samplesDir ?? 'clicks');
+          scrollDir = path.join(libraryRoot, raw.sfx?.mouseScroll?.samplesDir ?? 'scrolls');
+        }
+      }
+
+      const countClips = (dir: string): number => {
+        if (!fs.existsSync(dir)) return 0;
+        return fs.readdirSync(dir).filter((name) => /^clip_\d+\.json$/i.test(name)).length;
+      };
+
+      const clickBuckets = [
+        { key: 'left', dir: path.join(clickDir, 'left') },
+        { key: 'right', dir: path.join(clickDir, 'right') },
+        { key: 'double', dir: path.join(clickDir, 'double') },
+      ] as const;
+      const scrollBuckets = [
+        { key: 'down-short', dir: path.join(scrollDir, 'down-short') },
+        { key: 'down-long', dir: path.join(scrollDir, 'down-long') },
+        { key: 'up-short', dir: path.join(scrollDir, 'up-short') },
+        { key: 'up-long', dir: path.join(scrollDir, 'up-long') },
+      ] as const;
+
+      const clickCounts = clickBuckets.map((b) => ({ ...b, count: countClips(b.dir) }));
+      const scrollCounts = scrollBuckets.map((b) => ({ ...b, count: countClips(b.dir) }));
+      const totalClicks = clickCounts.reduce((s, b) => s + b.count, 0);
+      const totalScrolls = scrollCounts.reduce((s, b) => s + b.count, 0);
+      const coveredBuckets = [...clickCounts, ...scrollCounts].filter((b) => b.count > 0).length;
+      const totalBuckets = clickCounts.length + scrollCounts.length;
+      const coveragePercent = totalBuckets > 0 ? (coveredBuckets / totalBuckets) * 100 : 0;
+
+      console.log('\n=== Mouse SFX Library Coverage ===');
+      console.log(`Library root:      ${libraryRoot}`);
+      console.log(`Total click clips: ${totalClicks}`);
+      console.log(`Total scroll clips:${String(totalScrolls).padStart(2, ' ')}`);
+      console.log(`Bucket coverage:   ${coveredBuckets}/${totalBuckets} (${coveragePercent.toFixed(1)}%)\n`);
+
+      console.log('--- Click buckets ---');
+      for (const b of clickCounts) {
+        console.log(`  ${b.key.padEnd(10)} ${String(b.count).padStart(4)} clip(s)`);
+        if (opts.verbose) console.log(`    ${b.dir}`);
+      }
+      console.log();
+
+      console.log('--- Scroll buckets ---');
+      for (const b of scrollCounts) {
+        console.log(`  ${b.key.padEnd(10)} ${String(b.count).padStart(4)} clip(s)`);
+        if (opts.verbose) console.log(`    ${b.dir}`);
+      }
+      console.log();
+
+      const missing = [...clickCounts, ...scrollCounts].filter((b) => b.count === 0);
+      if (missing.length === 0) {
+        console.log('All mouse buckets have at least one clip.');
+      } else {
+        console.log('Missing buckets:');
+        for (const b of missing) {
+          console.log(`  - ${b.key}`);
+        }
+      }
+    } catch (err) {
+      logger.error(`Mouse coverage failed: ${err}`);
+      process.exit(1);
+    }
+  });
+
+program
   .command('extract-typing [sessionNumber]')
   .description('Re-slice a session into clips (e.g. after adding volume normalization). Use session number like 1 for session_001.')
   .option('-o, --output <dir>', 'Typing clips library directory', './sfx-library/typing')

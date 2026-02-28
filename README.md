@@ -163,6 +163,12 @@ Output folders are auto-created:
 
 Use `--duration-sec` to auto-stop and `--min-scroll-delta` / `--short-scroll-threshold` to tune scroll bucketing.
 
+Check bucket coverage (and missing categories):
+
+```bash
+node dist/cli.js mouse-coverage -c config.json
+```
+
 ---
 
 ## Output layout
