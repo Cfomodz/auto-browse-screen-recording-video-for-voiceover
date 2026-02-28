@@ -235,16 +235,22 @@ export class VideoAssembler {
         }
       }
 
-      // Duration adjustment
-      if (seg.durationSeconds > targetDuration) {
-        // Longer than needed — we'll trim via -t flag
-      } else if (seg.durationSeconds < targetDuration * 0.5) {
-        // Much shorter — slow down to fill
-        const factor = seg.durationSeconds / targetDuration;
-        videoFilters.push(`setpts=${(1 / factor).toFixed(3)}*PTS`);
+      // Duration adjustment: trim if too long; hold last frame + pad audio if too short.
+      // Never slow down the video — that would desync SFX, clicks, and typing from visuals.
+      const padDuration =
+        seg.durationSeconds < targetDuration && targetDuration - seg.durationSeconds > 0.05
+          ? targetDuration - seg.durationSeconds
+          : 0;
+
+      if (padDuration > 0) {
+        videoFilters.push(`tpad=stop_mode=clone:stop_duration=${padDuration.toFixed(3)}`);
       }
 
       const inputHasAudio = seg.sfxBaked || (await hasAudioStream(seg.filePath));
+      const audioFilters: string[] = [];
+      if (padDuration > 0 && inputHasAudio) {
+        audioFilters.push(`apad=pad_dur=${padDuration.toFixed(3)}`);
+      }
 
       await new Promise<void>((resolve, reject) => {
         let cmd = ffmpeg().input(seg.filePath);
@@ -263,7 +269,12 @@ export class VideoAssembler {
 
         let silencePath: string | null = null;
         if (inputHasAudio) {
-          outputOpts.push('-map', '0:a:0', '-c:a', 'aac', '-b:a', '192k');
+          outputOpts.push('-map', '0:a:0');
+          if (audioFilters.length > 0) {
+            outputOpts.push('-af', audioFilters.join(','), '-c:a', 'aac', '-b:a', '192k');
+          } else {
+            outputOpts.push('-c:a', 'aac', '-b:a', '192k');
+          }
         } else {
           // Add silent audio so concat gets consistent streams (no lavfi)
           const silenceDuration = seg.endTime - seg.startTime;

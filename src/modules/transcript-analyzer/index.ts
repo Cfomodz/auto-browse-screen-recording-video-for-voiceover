@@ -107,7 +107,7 @@ Respond with a JSON array of objects with this shape:
     }
 
     const topics: ExtractedTopic[] = parsed.map((item) => ({
-      topic: item.topic,
+      topic: (item.topic ?? '').toLowerCase(),
       description: item.description,
       segments: item.segmentIndices
         .filter((i) => i >= 0 && i < segments.length)

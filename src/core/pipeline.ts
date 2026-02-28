@@ -8,6 +8,8 @@ import {
   PipelineEvent,
   PipelineResult,
   RecordedSegment,
+  SfxEvent,
+  ZoomKeyframe,
 } from './types';
 import { ModuleRegistry } from './module';
 import { BrowserEngine } from '../browser/engine';
@@ -190,6 +192,13 @@ export class Pipeline extends EventEmitter {
                 endTime: segEnd,
               };
               recordedSegments.push(recorded);
+              await this.writeClipTimingJson(
+                existingPath,
+                clipName,
+                durationSeconds,
+                [],
+                []
+              );
               this.emit_event({ type: 'recording-skip', segment: recorded });
               continue;
             }
@@ -265,6 +274,16 @@ export class Pipeline extends EventEmitter {
           };
 
           recordedSegments.push(recorded);
+
+          // Write clip timing JSON for debugging sync issues
+          await this.writeClipTimingJson(
+            filePath,
+            clipName,
+            result.durationSeconds,
+            result.sfxEvents ?? [],
+            result.zoomKeyframes ?? []
+          );
+
           this.logger.info(
             `Clip "${clipName}": ${result.durationSeconds.toFixed(1)}s, ` +
             `${(result.sfxEvents ?? []).length} SFX events, ` +
@@ -310,7 +329,11 @@ export class Pipeline extends EventEmitter {
           raw.transcriptPath === this.config.transcriptPath &&
           raw.transcriptMtime === transcriptMtime
         ) {
-          return raw.topics as ExtractedTopic[];
+          const topics = (raw.topics as ExtractedTopic[]).map((t) => ({
+            ...t,
+            topic: t.topic.toLowerCase(),
+          }));
+          return topics;
         }
       } catch {
         // fall through to analyze
@@ -435,6 +458,15 @@ export class Pipeline extends EventEmitter {
         sfxEvents: result.sfxEvents,
         sfxBaked,
       };
+
+      await this.writeClipTimingJson(
+        filePath,
+        clipName,
+        result.durationSeconds,
+        result.sfxEvents ?? [],
+        result.zoomKeyframes ?? []
+      );
+
       this.emit_event({ type: 'recording-complete', segment: recorded });
       return recorded;
     } finally {
@@ -468,6 +500,61 @@ export class Pipeline extends EventEmitter {
       this.logger.debug(`Failed to write topics cache: ${e}`);
     }
     return topics;
+  }
+
+  /**
+   * Write a clip timing JSON file alongside each clip for debugging sync issues.
+   * Includes raw and scaled SFX timeOffsets, zoom keyframes, and timing notes.
+   * Called for both newly recorded clips and picked-up existing clips.
+   */
+  private async writeClipTimingJson(
+    filePath: string,
+    clipName: string,
+    realDurationSeconds: number,
+    sfxEvents: SfxEvent[],
+    zoomKeyframes: ZoomKeyframe[]
+  ): Promise<void> {
+    try {
+      const videoDuration = await getVideoDuration(filePath).catch(() => realDurationSeconds);
+      const scale = videoDuration / realDurationSeconds;
+      const scaledEvents = sfxEvents.map((e) => ({
+        type: e.type,
+        timeOffsetRaw: e.timeOffset,
+        timeOffsetScaled: e.timeOffset * scale,
+        audioFile: path.basename(e.audioFile),
+        durationSeconds: e.durationSeconds,
+      }));
+
+      const jsonPath = path.resolve(path.dirname(filePath), `${clipName}.json`);
+      const isPickup = sfxEvents.length === 0 && zoomKeyframes.length === 0;
+      const payload = {
+        clipName,
+        clipPath: filePath,
+        realDurationSeconds,
+        videoDuration,
+        scale,
+        pickedUpFromPreviousRun: isPickup,
+        timingNotes: isPickup
+          ? [
+              'Clip was picked up from previous run (not re-recorded). No SFX/zoom timing data available.',
+              'Delete the clip and re-run to record fresh and get full timing data.',
+            ]
+          : [
+              'SFX timeOffsetRaw: seconds since startClipSfxTracking (module start).',
+              'Recording starts before module start (startRecording called first) — video time 0 may be ~0–100ms before SFX time 0.',
+              'Bake uses scale = videoDuration/realDurationSeconds to map SFX to video timeline (timeOffsetScaled).',
+              'No fixed delays added by the pipeline — all SFX timeOffsets are relative to module start.',
+            ],
+        sfxEvents: scaledEvents,
+        zoomKeyframes: zoomKeyframes.map((k) => ({ timeOffset: k.timeOffset, label: k.label })),
+      };
+      const jsonStr = JSON.stringify(payload, null, 2);
+      fs.writeFileSync(jsonPath, jsonStr, 'utf-8');
+      this.logger.info(`Wrote clip timing: ${jsonPath}`);
+      this.logger.debug(`Clip timing JSON:\n${jsonStr}`);
+    } catch (err) {
+      this.logger.warn(`Could not write clip timing JSON: ${(err as Error).message}`);
+    }
   }
 
   private sanitizeFilename(name: string): string {
