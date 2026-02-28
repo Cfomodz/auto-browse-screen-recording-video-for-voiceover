@@ -516,11 +516,11 @@ export class Pipeline extends EventEmitter {
   ): Promise<void> {
     try {
       const videoDuration = await getVideoDuration(filePath).catch(() => realDurationSeconds);
-      const scale = videoDuration / realDurationSeconds;
-      const scaledEvents = sfxEvents.map((e) => ({
+      const recordingOffset = Math.max(0, videoDuration - realDurationSeconds);
+      const mappedEvents = sfxEvents.map((e) => ({
         type: e.type,
         timeOffsetRaw: e.timeOffset,
-        timeOffsetScaled: e.timeOffset * scale,
+        timeOffsetInVideo: e.timeOffset + recordingOffset,
         audioFile: path.basename(e.audioFile),
         durationSeconds: e.durationSeconds,
       }));
@@ -532,7 +532,7 @@ export class Pipeline extends EventEmitter {
         clipPath: filePath,
         realDurationSeconds,
         videoDuration,
-        scale,
+        recordingOffset,
         pickedUpFromPreviousRun: isPickup,
         timingNotes: isPickup
           ? [
@@ -541,12 +541,16 @@ export class Pipeline extends EventEmitter {
             ]
           : [
               'SFX timeOffsetRaw: seconds since startClipSfxTracking (module start).',
-              'Recording starts before module start (startRecording called first) — video time 0 may be ~0–100ms before SFX time 0.',
-              'Bake uses scale = videoDuration/realDurationSeconds to map SFX to video timeline (timeOffsetScaled).',
-              'No fixed delays added by the pipeline — all SFX timeOffsets are relative to module start.',
+              'Recording starts before module start — recordingOffset = videoDuration - realDurationSeconds.',
+              'timeOffsetInVideo = timeOffsetRaw + recordingOffset (additive shift, not scaling).',
+              'Zoom keyframes use the same offset to align with the video timeline.',
             ],
-        sfxEvents: scaledEvents,
-        zoomKeyframes: zoomKeyframes.map((k) => ({ timeOffset: k.timeOffset, label: k.label })),
+        sfxEvents: mappedEvents,
+        zoomKeyframes: zoomKeyframes.map((k) => ({
+          timeOffset: k.timeOffset,
+          timeOffsetInVideo: k.timeOffset + recordingOffset,
+          label: k.label,
+        })),
       };
       const jsonStr = JSON.stringify(payload, null, 2);
       fs.writeFileSync(jsonPath, jsonStr, 'utf-8');

@@ -374,6 +374,70 @@ describe('ZoomEngine filter chain with real FFmpeg', () => {
   });
 });
 
+describe('ZoomEngine filter via fluent-ffmpeg outputOptions', () => {
+  it('zoom filter applied via outputOptions produces valid zoomed video', async () => {
+    const { ZoomEngine, ZoomPresets } = await import('../../src/camera/zoom-engine');
+    const { createLogger } = await import('../../src/utils/logger');
+    const zoomLogger = createLogger('ZoomFluentTest');
+    zoomLogger.silent = true;
+
+    const engine = new ZoomEngine(
+      { enabled: true, maxZoom: 1.4, transitionMs: 800, easing: 'ease-in-out' as const },
+      zoomLogger
+    );
+
+    const keyframes = [
+      ZoomPresets.searchBarFocus(0),
+      ZoomPresets.fullWindow(1.5),
+      ZoomPresets.searchResultsFocus(2.5),
+      ZoomPresets.fullWindow(3.5),
+    ];
+
+    const zoomFilter = engine.buildFilterChain(keyframes, 4, 1920, 1080, 30);
+    expect(zoomFilter).not.toBeNull();
+
+    // Combine zoom with tpad (same as processClips does)
+    const videoFilters = [zoomFilter!, `tpad=stop_mode=clone:stop_duration=0.500`];
+    const filterStr = videoFilters.join(',');
+
+    const srcPath = path.join(tmpDir, 'zoom_fluent_src.mp4');
+    const outPath = path.join(tmpDir, 'zoom_fluent_out.mp4');
+    generateTestVideo(srcPath, { durationSec: 4, width: 1920, height: 1080, fps: 30 });
+
+    // Apply via fluent-ffmpeg's outputOptions — the code path our fix uses.
+    // This verifies fluent-ffmpeg doesn't mangle the escaped commas (\,).
+    const ffmpeg = require('fluent-ffmpeg') as typeof import('fluent-ffmpeg');
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg()
+        .input(srcPath)
+        .outputOptions(['-vf', filterStr])
+        .outputOptions([
+          '-c:v libx264',
+          '-pix_fmt yuv420p',
+          '-preset ultrafast',
+          '-crf 23',
+        ])
+        .output(outPath)
+        .on('end', () => resolve())
+        .on('error', (err: Error) => reject(err))
+        .run();
+    });
+
+    assertFileExists(outPath, 1000);
+
+    const probe = ffprobe(outPath);
+    const videoStream = probe.streams.find((s) => s.codec_type === 'video');
+    expect(videoStream).toBeDefined();
+    expect(videoStream!.width).toBe(1920);
+    expect(videoStream!.height).toBe(1080);
+
+    // Duration should be ~4.5s (4s original + 0.5s tpad)
+    const duration = parseFloat(probe.format.duration);
+    expect(duration).toBeGreaterThan(4);
+    expect(duration).toBeLessThan(5.5);
+  });
+});
+
 describe('SFX track building with real files', () => {
   it('builds a multi-event SFX track that has audible content', () => {
     // Create two "click" sounds at different offsets
