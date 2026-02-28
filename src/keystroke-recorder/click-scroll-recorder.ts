@@ -43,6 +43,10 @@ const CLICK_POST_ROLL_MS = 350;
 
 /** Ms of audio to capture after the last scroll event in a gesture. */
 const SCROLL_TAIL_MS = 500;
+/** Ignore tiny accidental scroll gestures below this absolute delta. */
+const DEFAULT_MIN_SCROLL_DELTA = 120;
+/** Threshold between short and long scroll gesture buckets. */
+const DEFAULT_SHORT_SCROLL_THRESHOLD = 900;
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -305,10 +309,189 @@ export class ClickScrollRecorder {
     return clips;
   }
 
+  /**
+   * Record a single free-form mouse session and auto-split clips into:
+   * - clicks/{left,right,double}
+   * - scrolls/{down-short,down-long,up-short,up-long}
+   */
+  async runFreeFormMouseSession(options: {
+    clickRootDir: string;
+    scrollRootDir: string;
+    durationSec?: number;
+    minScrollDelta?: number;
+    shortScrollThreshold?: number;
+  }): Promise<{
+    leftClicks: number;
+    rightClicks: number;
+    doubleClicks: number;
+    scrolls: number;
+  }> {
+    const clickRootDir = path.resolve(options.clickRootDir);
+    const scrollRootDir = path.resolve(options.scrollRootDir);
+    const minScrollDelta = options.minScrollDelta ?? DEFAULT_MIN_SCROLL_DELTA;
+    const shortScrollThreshold = options.shortScrollThreshold ?? DEFAULT_SHORT_SCROLL_THRESHOLD;
+    const maxDurationMs = options.durationSec ? Math.max(1, options.durationSec) * 1000 : undefined;
+
+    const clickDirs: Record<ClickButtonType, string> = {
+      left: path.join(clickRootDir, 'left'),
+      right: path.join(clickRootDir, 'right'),
+      double: path.join(clickRootDir, 'double'),
+    };
+    const scrollDirs = {
+      'down-short': path.join(scrollRootDir, 'down-short'),
+      'down-long': path.join(scrollRootDir, 'down-long'),
+      'up-short': path.join(scrollRootDir, 'up-short'),
+      'up-long': path.join(scrollRootDir, 'up-long'),
+    };
+    for (const dir of Object.values(clickDirs)) fs.mkdirSync(dir, { recursive: true });
+    for (const dir of Object.values(scrollDirs)) fs.mkdirSync(dir, { recursive: true });
+
+    this.logger.info('=== Free-form mouse recorder ===');
+    this.logger.info(`Click output: ${clickRootDir}`);
+    this.logger.info(`Scroll output: ${scrollRootDir}`);
+
+    const { browser, page } = await this.openRecordingPage('mixed');
+    const sessionBase = `session_${Date.now()}`;
+    const sessionWav = path.join(this.outputDir, `${sessionBase}.${this.audioFormat}`);
+    const sessionStartMs = Date.now();
+
+    const audioProc = this.startAudio(sessionWav);
+    await new Promise((r) => setTimeout(r, 300));
+
+    const leftMouseDowns: number[] = [];
+    const rightClicks: number[] = [];
+    const doubleClicks: number[] = [];
+    const rawScrollEvents: ScrollEvent[] = [];
+
+    await page.exposeFunction(
+      '__onMouseEventRecorded',
+      (payload: { type: 'mousedown' | 'dblclick' | 'wheel'; button?: number; deltaY?: number }) => {
+        const timestampMs = Date.now() - sessionStartMs;
+        if (payload.type === 'wheel') {
+          rawScrollEvents.push({ deltaY: payload.deltaY ?? 0, timestampMs });
+          return;
+        }
+        if (payload.type === 'dblclick') {
+          doubleClicks.push(timestampMs);
+          return;
+        }
+        if (payload.button === 2) {
+          rightClicks.push(timestampMs);
+          return;
+        }
+        if (payload.button === 0) {
+          leftMouseDowns.push(timestampMs);
+        }
+      }
+    );
+
+    await this.injectMixedListener(page);
+    await this.waitForSessionEnd(page, () => {
+      if (!maxDurationMs) return false;
+      return Date.now() - sessionStartMs >= maxDurationMs;
+    });
+
+    await this.stopAudio(audioProc);
+    await new Promise((r) => setTimeout(r, 500));
+    await browser.close();
+
+    if (!fs.existsSync(sessionWav)) {
+      this.logger.warn('Session audio file missing — no clips extracted.');
+      return { leftClicks: 0, rightClicks: 0, doubleClicks: 0, scrolls: 0 };
+    }
+
+    // Remove left-clicks that are part of a double-click gesture.
+    const DOUBLE_SUPPRESS_WINDOW_MS = 350;
+    const leftClicks = leftMouseDowns.filter((t) =>
+      !doubleClicks.some((dt) => t <= dt && dt - t <= DOUBLE_SUPPRESS_WINDOW_MS)
+    );
+
+    // Extract click clips by type
+    const clickCounts = { left: 0, right: 0, double: 0 } as Record<ClickButtonType, number>;
+    const clickCounters: Record<ClickButtonType, number> = {
+      left: getMaxExistingClipNumber(clickDirs.left),
+      right: getMaxExistingClipNumber(clickDirs.right),
+      double: getMaxExistingClipNumber(clickDirs.double),
+    };
+    const writeClick = (clickType: ClickButtonType, timestampMs: number) => {
+      const startSec = Math.max(0, (timestampMs - CLICK_PRE_ROLL_MS) / 1000);
+      const durationSec = (CLICK_PRE_ROLL_MS + CLICK_POST_ROLL_MS) / 1000;
+      const outDir = clickDirs[clickType];
+      clickCounters[clickType]++;
+      const name = `clip_${String(clickCounters[clickType]).padStart(4, '0')}`;
+      const destAudio = path.join(outDir, `${name}.${this.audioFormat}`);
+      if (!this.sliceAudio(sessionWav, destAudio, startSec, durationSec)) return;
+      const meta: ClickClipMeta = {
+        audioFile: `${name}.${this.audioFormat}`,
+        durationMs: CLICK_PRE_ROLL_MS + CLICK_POST_ROLL_MS,
+        clickType,
+        clickSignalMs: CLICK_PRE_ROLL_MS,
+      };
+      fs.writeFileSync(path.join(outDir, `${name}.json`), JSON.stringify(meta, null, 2));
+      clickCounts[clickType]++;
+    };
+    leftClicks.forEach((t) => writeClick('left', t));
+    rightClicks.forEach((t) => writeClick('right', t));
+    doubleClicks.forEach((t) => writeClick('double', t));
+
+    // Extract scroll clips grouped by gesture and classified into buckets
+    const gestures = this.segmentScrollGestures(rawScrollEvents);
+    let scrollCount = 0;
+    const scrollCounters = Object.fromEntries(
+      Object.entries(scrollDirs).map(([bucket, dir]) => [bucket, getMaxExistingClipNumber(dir)])
+    ) as Record<keyof typeof scrollDirs, number>;
+
+    for (const gesture of gestures) {
+      if (gesture.length === 0) continue;
+      const sumDelta = gesture.reduce((s, e) => s + e.deltaY, 0);
+      const totalDeltaY = gesture.reduce((s, e) => s + Math.abs(e.deltaY), 0);
+      if (totalDeltaY < minScrollDelta) continue;
+
+      const direction: 'down' | 'up' = sumDelta >= 0 ? 'down' : 'up';
+      const bucket = `${direction}-${totalDeltaY >= shortScrollThreshold ? 'long' : 'short'}` as keyof typeof scrollDirs;
+      const outDir = scrollDirs[bucket];
+      const startMs = gesture[0].timestampMs;
+      const endMs = gesture[gesture.length - 1].timestampMs;
+      const durationMs = endMs - startMs + SCROLL_TAIL_MS;
+      const startSec = Math.max(0, startMs / 1000);
+      const durationSec = durationMs / 1000;
+
+      scrollCounters[bucket]++;
+      const name = `clip_${String(scrollCounters[bucket]).padStart(4, '0')}`;
+      const destAudio = path.join(outDir, `${name}.${this.audioFormat}`);
+      if (!this.sliceAudio(sessionWav, destAudio, startSec, durationSec)) continue;
+
+      const events: ScrollEvent[] = gesture.map((e) => ({
+        deltaY: e.deltaY,
+        timestampMs: e.timestampMs - startMs,
+      }));
+      const meta: ScrollClipMeta = {
+        audioFile: `${name}.${this.audioFormat}`,
+        durationMs,
+        totalDeltaY,
+        direction,
+        events,
+      };
+      fs.writeFileSync(path.join(outDir, `${name}.json`), JSON.stringify(meta, null, 2));
+      scrollCount++;
+    }
+
+    try { fs.unlinkSync(sessionWav); } catch { /* ignore */ }
+    this.logger.info(
+      `Saved: ${clickCounts.left} left, ${clickCounts.right} right, ${clickCounts.double} double clicks; ${scrollCount} scroll gestures.`
+    );
+    return {
+      leftClicks: clickCounts.left,
+      rightClicks: clickCounts.right,
+      doubleClicks: clickCounts.double,
+      scrolls: scrollCount,
+    };
+  }
+
   // ─── Internal helpers ─────────────────────────────────────────────────────
 
   private async openRecordingPage(
-    mode: 'click' | 'scroll',
+    mode: 'click' | 'scroll' | 'mixed',
     clickType?: ClickButtonType,
     targetCount?: number
   ): Promise<{ browser: Browser; page: Page }> {
@@ -325,17 +508,23 @@ export class ClickScrollRecorder {
 
     const title = mode === 'click'
       ? `Click Recorder — ${clickType} clicks`
-      : 'Scroll Recorder';
+      : mode === 'scroll'
+        ? 'Scroll Recorder'
+        : 'Free-form Mouse Recorder';
     const instructions = mode === 'click'
       ? `Click anywhere on this page with your <strong>${clickType} mouse button</strong>.<br>
          Each click is recorded. Target: <span id="target">${targetCount}</span> clips.<br>
          Close the window when done (or it will close automatically).`
-      : `Scroll (swipe) naturally on this page.<br>
+      : mode === 'scroll'
+        ? `Scroll (swipe) naturally on this page.<br>
          Each swipe gesture is recorded. Target: <span id="target">${targetCount}</span> clips.<br>
-         Close the window when done.`;
+         Close the window when done.`
+        : `Use this page naturally: left-click, right-click, double-click, and scroll.<br>
+         Events are auto-categorized into click/scroll folders.<br>
+         Close the window when done${targetCount ? ' or wait for auto-stop' : ''}.`;
 
-    const bgColor = mode === 'click' ? '#1a1a2e' : '#0f3460';
-    const accentColor = mode === 'click' ? '#e94560' : '#16213e';
+    const bgColor = mode === 'click' ? '#1a1a2e' : mode === 'scroll' ? '#0f3460' : '#18230f';
+    const accentColor = mode === 'click' ? '#e94560' : mode === 'scroll' ? '#16213e' : '#1f4d2e';
 
     const html = `<!DOCTYPE html>
 <html lang="en">
@@ -354,7 +543,7 @@ export class ClickScrollRecorder {
       align-items: center;
       justify-content: center;
       user-select: none;
-      cursor: ${mode === 'click' ? 'crosshair' : 'ns-resize'};
+      cursor: ${mode === 'click' ? 'crosshair' : mode === 'scroll' ? 'ns-resize' : 'default'};
     }
     h1 { font-size: 1.6rem; margin-bottom: 1rem; }
     p { font-size: 1rem; line-height: 1.6; text-align: center; max-width: 520px; opacity: 0.9; }
@@ -375,7 +564,7 @@ export class ClickScrollRecorder {
     @keyframes fadeOut { to { opacity: 0; } }
     /* Tall scrollable content for scroll mode */
     #scroll-content {
-      display: ${mode === 'scroll' ? 'block' : 'none'};
+      display: ${mode === 'scroll' || mode === 'mixed' ? 'block' : 'none'};
       position: fixed;
       top: 0; left: 0; right: 0;
       height: 300vh;
@@ -436,12 +625,29 @@ export class ClickScrollRecorder {
       e.preventDefault();
     });
     document.addEventListener('contextmenu', (e) => e.preventDefault());
-    ` : `
+    ` : mode === 'scroll' ? `
     document.addEventListener('wheel', (e) => {
       window.__onWheelRecorded(e.deltaY);
       bump();
       e.preventDefault();
     }, { passive: false });
+    ` : `
+    document.addEventListener('mousedown', (e) => {
+      window.__onMouseEventRecorded({ type: 'mousedown', button: e.button });
+      bump();
+      if (e.button === 2) e.preventDefault();
+    });
+    document.addEventListener('dblclick', (e) => {
+      window.__onMouseEventRecorded({ type: 'dblclick', button: e.button });
+      bump();
+      e.preventDefault();
+    });
+    document.addEventListener('wheel', (e) => {
+      window.__onMouseEventRecorded({ type: 'wheel', deltaY: e.deltaY });
+      bump();
+      e.preventDefault();
+    }, { passive: false });
+    document.addEventListener('contextmenu', (e) => e.preventDefault());
     `}
   </script>
 </body>
@@ -456,6 +662,10 @@ export class ClickScrollRecorder {
   }
 
   private async injectScrollListener(_page: Page): Promise<void> {
+    // Listener is already injected via setContent; nothing extra needed.
+  }
+
+  private async injectMixedListener(_page: Page): Promise<void> {
     // Listener is already injected via setContent; nothing extra needed.
   }
 

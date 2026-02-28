@@ -148,6 +148,23 @@ See `node dist/cli.js record-typing --help` (and same for `extract-typing`, `cov
 
 ---
 
+### Mouse SFX library (optional)
+
+Record click + scroll sounds in one free-form session, then auto-sort clips:
+
+```bash
+node dist/cli.js record-mouse -c config.json
+```
+
+Output folders are auto-created:
+
+- `.../clicks/left`, `.../clicks/right`, `.../clicks/double`
+- `.../scrolls/down-short`, `.../scrolls/down-long`, `.../scrolls/up-short`, `.../scrolls/up-long`
+
+Use `--duration-sec` to auto-stop and `--min-scroll-delta` / `--short-scroll-threshold` to tune scroll bucketing.
+
+---
+
 ## Output layout
 
 For a run with `outputDir: "./output-car-wash"`:

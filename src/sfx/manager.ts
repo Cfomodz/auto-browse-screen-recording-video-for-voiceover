@@ -177,7 +177,9 @@ export class SfxManager {
 
   /**
    * Load scroll clips from JSON sidecars.
-   * Expected structure: scrolls/clip_001.wav + clip_001.json (ScrollClipMeta)
+   * Supports flat or nested structure, e.g:
+   *   scrolls/clip_001.wav + clip_001.json
+   *   scrolls/down-short/clip_0001.wav + clip_0001.json
    */
   private loadScrollClips(dir: string): ScrollClipMeta[] {
     if (!fs.existsSync(dir)) {
@@ -186,17 +188,26 @@ export class SfxManager {
     }
 
     const clips: ScrollClipMeta[] = [];
-    const jsonFiles = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));
-
-    for (const jsonFile of jsonFiles) {
-      try {
-        const meta: ScrollClipMeta = JSON.parse(
-          fs.readFileSync(path.join(dir, jsonFile), 'utf-8')
-        );
-        meta.audioFile = path.resolve(dir, meta.audioFile);
-        if (fs.existsSync(meta.audioFile)) clips.push(meta);
-      } catch {
-        this.logger.warn(`Failed to load scroll clip metadata: ${jsonFile}`);
+    const stack = [dir];
+    while (stack.length > 0) {
+      const curr = stack.pop() as string;
+      const entries = fs.readdirSync(curr, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(curr, entry.name);
+        if (entry.isDirectory()) {
+          stack.push(fullPath);
+          continue;
+        }
+        if (!entry.isFile() || !entry.name.endsWith('.json')) continue;
+        try {
+          const meta: ScrollClipMeta = JSON.parse(
+            fs.readFileSync(fullPath, 'utf-8')
+          );
+          meta.audioFile = path.resolve(curr, meta.audioFile);
+          if (fs.existsSync(meta.audioFile)) clips.push(meta);
+        } catch {
+          this.logger.warn(`Failed to load scroll clip metadata: ${fullPath}`);
+        }
       }
     }
 

@@ -472,6 +472,75 @@ program
   });
 
 program
+  .command('record-mouse')
+  .description('Record free-form mouse SFX (click + scroll) and auto-sort clips')
+  .option('-o, --output <dir>', 'SFX library root directory', './sfx-library')
+  .option('-r, --sample-rate <rate>', 'Audio sample rate', '44100')
+  .option('-f, --format <format>', 'Audio format: wav or flac', 'wav')
+  .option('--duration-sec <sec>', 'Auto-stop after N seconds (optional)')
+  .option('--min-scroll-delta <px>', 'Ignore tiny scroll gestures below this absolute delta', '120')
+  .option('--short-scroll-threshold <px>', 'Short vs long scroll threshold (absolute delta)', '900')
+  .option('-c, --config <path>', 'Pipeline config path (default: config.json or broll-config.json in cwd)')
+  .action(async (opts) => {
+    try {
+      const logger = createLogger('MouseRecorder');
+      let libraryRoot = path.resolve(opts.output);
+      let clickDir = path.join(libraryRoot, 'clicks');
+      let scrollDir = path.join(libraryRoot, 'scrolls');
+      let browserExecutablePath: string | undefined = undefined;
+
+      const configPath = opts.config ? path.resolve(opts.config) : getDefaultConfigPath();
+      if (configPath && fs.existsSync(configPath)) {
+        const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        const baseDir = path.dirname(configPath);
+        if (raw.browserExecutablePath) {
+          browserExecutablePath = path.isAbsolute(raw.browserExecutablePath)
+            ? raw.browserExecutablePath
+            : path.resolve(baseDir, raw.browserExecutablePath);
+        }
+        if (raw.sfx?.libraryPath) {
+          libraryRoot = path.resolve(baseDir, raw.sfx.libraryPath);
+          clickDir = path.join(libraryRoot, raw.sfx?.mouseClick?.samplesDir ?? 'clicks');
+          scrollDir = path.join(libraryRoot, raw.sfx?.mouseScroll?.samplesDir ?? 'scrolls');
+        }
+      }
+
+      const { ClickScrollRecorder } = await import('./keystroke-recorder/click-scroll-recorder');
+      const recorder = new ClickScrollRecorder({
+        outputDir: libraryRoot,
+        browserExecutablePath,
+        sampleRate: parseInt(opts.sampleRate, 10),
+        audioFormat: opts.format,
+        logger,
+      });
+
+      const durationSec = opts.durationSec != null ? parseFloat(String(opts.durationSec)) : undefined;
+      const minScrollDelta = parseFloat(String(opts.minScrollDelta ?? '120'));
+      const shortScrollThreshold = parseFloat(String(opts.shortScrollThreshold ?? '900'));
+
+      const result = await recorder.runFreeFormMouseSession({
+        clickRootDir: clickDir,
+        scrollRootDir: scrollDir,
+        durationSec: Number.isFinite(durationSec) ? durationSec : undefined,
+        minScrollDelta: Number.isFinite(minScrollDelta) ? minScrollDelta : 120,
+        shortScrollThreshold: Number.isFinite(shortScrollThreshold) ? shortScrollThreshold : 900,
+      });
+
+      console.log('\n=== Mouse Session Summary ===');
+      console.log(`Left clicks:   ${result.leftClicks}`);
+      console.log(`Right clicks:  ${result.rightClicks}`);
+      console.log(`Double clicks: ${result.doubleClicks}`);
+      console.log(`Scroll clips:  ${result.scrolls}`);
+      console.log('\nSaved to:');
+      console.log(`  ${clickDir}`);
+      console.log(`  ${scrollDir}`);
+    } catch (err) {
+      logger.error(`Mouse recording failed: ${err}`);
+      process.exit(1);
+    }
+  });
+
+program
   .command('extract-typing [sessionNumber]')
   .description('Re-slice a session into clips (e.g. after adding volume normalization). Use session number like 1 for session_001.')
   .option('-o, --output <dir>', 'Typing clips library directory', './sfx-library/typing')
