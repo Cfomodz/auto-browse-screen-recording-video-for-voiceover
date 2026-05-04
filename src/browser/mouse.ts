@@ -1,4 +1,5 @@
 import { Page } from 'puppeteer-core';
+import { ScrollEvent } from '../core/types';
 import { delay } from '../utils/timing';
 
 /**
@@ -60,6 +61,33 @@ export class MouseAnimator {
       const jitter = 0.8 + Math.random() * 0.4;
       await this.page.mouse.wheel({ deltaY: perStep * jitter });
       await delay(durationMs / steps);
+    }
+  }
+
+  /**
+   * Replay recorded scroll events with their original timing.
+   *
+   * This is the scroll equivalent of TypingAnimator.typeWithAudioCadence():
+   * the wheel events are fired at the exact millisecond offsets captured
+   * during recording, so the visual scroll velocity and micro-pauses match
+   * the trackpad gesture embedded in the paired audio clip.
+   *
+   * @param events           Ordered scroll events from a ScrollClipMeta
+   * @param reverseDirection Negate all deltaY values (play a down clip as up)
+   */
+  async scrollWithAudioCadence(
+    events: ScrollEvent[],
+    reverseDirection: boolean = false
+  ): Promise<void> {
+    if (events.length === 0) return;
+    const startTime = Date.now();
+
+    for (const event of events) {
+      const elapsed = Date.now() - startTime;
+      const waitMs = Math.max(0, event.timestampMs - elapsed);
+      if (waitMs > 0) await delay(waitMs);
+      const deltaY = reverseDirection ? -event.deltaY : event.deltaY;
+      await this.page.mouse.wheel({ deltaY });
     }
   }
 

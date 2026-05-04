@@ -44,8 +44,10 @@ export class VideoAssembler {
    * Makes clips self-contained for debugging and progressive assembly.
    *
    * SFX timeOffsets are in real-time (seconds since module start). The video
-   * duration may differ (frame count / fps) if the screencast capture rate
-   * differs from real-time. We scale timeOffsets to match the actual video.
+   * may start slightly earlier (recording begins before the module), so we
+   * shift events forward by the difference between video duration and module
+   * duration rather than scaling — the concat-demuxer assembly preserves
+   * real-time frame spacing, making the video timeline match wall-clock time.
    */
   async bakeSfxIntoClip(
     videoPath: string,
@@ -59,18 +61,21 @@ export class VideoAssembler {
 
     const videoDuration = await getVideoDuration(videoPath).catch(() => realDurationSeconds);
 
-    const scale = videoDuration / realDurationSeconds;
-    const scaledEvents = validEvents.map((e) => ({
+    // Recording starts before the module (T0 < T1). SFX events are relative to
+    // T1 (module start), but the video begins at T0. Shift events forward by the
+    // gap so they land at the correct point in the video timeline.
+    const recordingOffset = Math.max(0, videoDuration - realDurationSeconds);
+    const shiftedEvents = validEvents.map((e) => ({
       ...e,
-      timeOffset: e.timeOffset * scale,
+      timeOffset: e.timeOffset + recordingOffset,
     }));
 
     this.logger.debug(
-      `Baking SFX into clip (${path.basename(videoPath)}): ${scaledEvents.length} events, ` +
-        `video ${videoDuration.toFixed(1)}s, real ${realDurationSeconds.toFixed(1)}s, scale ${scale.toFixed(2)}x`
+      `Baking SFX into clip (${path.basename(videoPath)}): ${shiftedEvents.length} events, ` +
+        `video ${videoDuration.toFixed(1)}s, real ${realDurationSeconds.toFixed(1)}s, offset +${recordingOffset.toFixed(3)}s`
     );
-    for (let i = 0; i < scaledEvents.length; i++) {
-      const e = scaledEvents[i];
+    for (let i = 0; i < shiftedEvents.length; i++) {
+      const e = shiftedEvents[i];
       this.logger.debug(
         `  [${i}] ${e.type} @ ${e.timeOffset.toFixed(2)}s | ${path.basename(e.audioFile)} | ${e.durationSeconds.toFixed(2)}s`
       );
@@ -84,13 +89,13 @@ export class VideoAssembler {
 
     const sfxVolume = this.config.sfx.volume ?? 0.5;
 
-    const sfxLabels = scaledEvents.map((_, i) => `[sfx${i}]`).join('');
+    const sfxLabels = shiftedEvents.map((_, i) => `[sfx${i}]`).join('');
     const filterGraph = [
-      ...scaledEvents.map((event, i) => {
+      ...shiftedEvents.map((event, i) => {
         const delayMs = Math.round(event.timeOffset * 1000);
         return `[${i + 1}:a]adelay=${delayMs}|${delayMs},volume=${sfxVolume}[sfx${i}]`;
       }),
-      `[0:a]${sfxLabels}amix=inputs=${scaledEvents.length + 1}:duration=first:dropout_transition=0[out]`,
+      `[0:a]${sfxLabels}amix=inputs=${shiftedEvents.length + 1}:duration=first:dropout_transition=0[out]`,
     ].join(';');
 
     const silencePath = createSilentWav(tmpDir, videoDuration);
@@ -99,7 +104,7 @@ export class VideoAssembler {
       await new Promise<void>((resolve, reject) => {
         let cmd = ffmpeg().input(silencePath);
 
-        for (const e of scaledEvents) cmd = cmd.input(e.audioFile);
+        for (const e of shiftedEvents) cmd = cmd.input(e.audioFile);
 
         cmd
           .complexFilter(filterGraph, ['out'])
@@ -221,11 +226,18 @@ export class VideoAssembler {
       // Build video filters
       const videoFilters: string[] = [];
 
-      // Zoom/pan filter
+      // Zoom/pan filter — keyframes are relative to module start; shift by the
+      // recording-start offset so they align with the actual video timeline.
       if (this.zoomEngine && seg.zoomKeyframes && seg.zoomKeyframes.length > 0) {
+        const actualDuration = await getVideoDuration(seg.filePath).catch(() => seg.durationSeconds);
+        const zoomOffset = Math.max(0, actualDuration - seg.durationSeconds);
+        const shiftedKeyframes = seg.zoomKeyframes.map((kf) => ({
+          ...kf,
+          timeOffset: kf.timeOffset + zoomOffset,
+        }));
         const zoomFilter = this.zoomEngine.buildFilterChain(
-          seg.zoomKeyframes,
-          seg.durationSeconds,
+          shiftedKeyframes,
+          actualDuration,
           this.config.video.resolution.width,
           this.config.video.resolution.height,
           this.config.video.fps
@@ -235,16 +247,22 @@ export class VideoAssembler {
         }
       }
 
-      // Duration adjustment
-      if (seg.durationSeconds > targetDuration) {
-        // Longer than needed — we'll trim via -t flag
-      } else if (seg.durationSeconds < targetDuration * 0.5) {
-        // Much shorter — slow down to fill
-        const factor = seg.durationSeconds / targetDuration;
-        videoFilters.push(`setpts=${(1 / factor).toFixed(3)}*PTS`);
+      // Duration adjustment: trim if too long; hold last frame + pad audio if too short.
+      // Never slow down the video — that would desync SFX, clicks, and typing from visuals.
+      const padDuration =
+        seg.durationSeconds < targetDuration && targetDuration - seg.durationSeconds > 0.05
+          ? targetDuration - seg.durationSeconds
+          : 0;
+
+      if (padDuration > 0) {
+        videoFilters.push(`tpad=stop_mode=clone:stop_duration=${padDuration.toFixed(3)}`);
       }
 
       const inputHasAudio = seg.sfxBaked || (await hasAudioStream(seg.filePath));
+      const audioFilters: string[] = [];
+      if (padDuration > 0 && inputHasAudio) {
+        audioFilters.push(`apad=pad_dur=${padDuration.toFixed(3)}`);
+      }
 
       await new Promise<void>((resolve, reject) => {
         let cmd = ffmpeg().input(seg.filePath);
@@ -263,7 +281,12 @@ export class VideoAssembler {
 
         let silencePath: string | null = null;
         if (inputHasAudio) {
-          outputOpts.push('-map', '0:a:0', '-c:a', 'aac', '-b:a', '192k');
+          outputOpts.push('-map', '0:a:0');
+          if (audioFilters.length > 0) {
+            outputOpts.push('-af', audioFilters.join(','), '-c:a', 'aac', '-b:a', '192k');
+          } else {
+            outputOpts.push('-c:a', 'aac', '-b:a', '192k');
+          }
         } else {
           // Add silent audio so concat gets consistent streams (no lavfi)
           const silenceDuration = seg.endTime - seg.startTime;
@@ -276,7 +299,10 @@ export class VideoAssembler {
         }
 
         if (videoFilters.length > 0) {
-          cmd = cmd.videoFilters(videoFilters.join(','));
+          // Pass -vf directly via outputOptions to preserve escaped commas in
+          // zoom-engine crop expressions. fluent-ffmpeg's videoFilters() splits
+          // on commas, which mangles the \, inside FFmpeg if() expressions.
+          cmd = cmd.outputOptions(['-vf', videoFilters.join(',')]);
         }
 
         cmd

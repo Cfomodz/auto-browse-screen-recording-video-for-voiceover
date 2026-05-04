@@ -69,7 +69,7 @@ export class NewsSearchModule extends BrollModule {
     // Slowly scroll through news headlines
     for (let i = 0; i < 4; i++) {
       await humanDelay(1500, 2500);
-      await browser.mouse.smoothScroll(250 + Math.random() * 150, 2500);
+      await browser.smoothScroll(250 + Math.random() * 150, 2500);
     }
 
     // Click on a news headline
@@ -80,7 +80,7 @@ export class NewsSearchModule extends BrollModule {
       // Wait for article page to load and pause to "read"
       await humanDelay(2000, 4000);
       // Scroll down the article slowly
-      await browser.mouse.smoothScroll(400, 3000);
+      await browser.smoothScroll(400, 3000);
       await humanDelay(1000, 2000);
     }
 
@@ -121,7 +121,7 @@ export class NewsSearchModule extends BrollModule {
       if (text === 'News') {
         const box = await link.boundingBox();
         if (box) {
-          await browser.mouse.moveAndClick(
+          await browser.clickAt(
             box.x + box.width / 2,
             box.y + box.height / 2
           );
@@ -148,7 +148,7 @@ export class NewsSearchModule extends BrollModule {
         const target = elements[Math.min(Math.floor(Math.random() * 3), elements.length - 1)];
         const box = await target.boundingBox();
         if (box) {
-          await browser.mouse.moveAndClick(
+          await browser.clickAt(
             box.x + box.width / 2,
             box.y + box.height / 2
           );

@@ -64,7 +64,7 @@ export class DefinitionSearchModule extends BrollModule {
       // Pause on the definition card for the viewer to read
       await humanDelay(3000, 5000);
       // Slowly scroll to reveal more of the definition if available
-      await browser.mouse.smoothScroll(150, 1500);
+      await browser.smoothScroll(150, 1500);
       await humanDelay(2000, 3000);
     } else {
       // Look for a dictionary result and click it
@@ -79,11 +79,11 @@ export class DefinitionSearchModule extends BrollModule {
         zoomKeyframes.push(ZoomPresets.fullWindow(elapsed()));
         await humanDelay(2000, 3000);
         // Scroll through the definition page
-        await browser.mouse.smoothScroll(300, 2500);
+        await browser.smoothScroll(300, 2500);
         await humanDelay(2000, 3000);
       } else {
         // Fallback: just scroll through regular results
-        await browser.mouse.smoothScroll(200, 2000);
+        await browser.smoothScroll(200, 2000);
         await humanDelay(1500, 2500);
       }
     }
@@ -140,9 +140,10 @@ export class DefinitionSearchModule extends BrollModule {
       if (isDictionary) {
         const box = await link.boundingBox();
         if (box && box.y > 0 && box.y < 800) {
-          await browser.mouse.moveAndClick(
+          await browser.clickAt(
             box.x + box.width / 2,
             box.y + box.height / 2,
+            'left',
             { durationMs: 800 }
           );
           await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {});

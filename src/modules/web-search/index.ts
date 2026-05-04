@@ -52,7 +52,7 @@ export class WebSearchModule extends BrollModule {
     const scrollPasses = 3;
     for (let i = 0; i < scrollPasses; i++) {
       await humanDelay(1500, 2500);
-      await browser.mouse.smoothScroll(300 + Math.random() * 200, 2000);
+      await browser.smoothScroll(300 + Math.random() * 200, 2000);
     }
 
     // Hover over a result link — zoom to it
@@ -78,7 +78,7 @@ export class WebSearchModule extends BrollModule {
 
     // Pull back out
     zoomKeyframes.push(ZoomPresets.fullWindow(elapsed()));
-    await browser.mouse.smoothScroll(-150, 1000);
+    await browser.smoothScroll(-150, 1000);
     await humanDelay(500, 1000);
 
     const durationSeconds = elapsed();
