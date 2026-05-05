@@ -34,6 +34,32 @@
     "transitionMs": 800,
     "easing": "ease-in-out"
   },
+  "cursor": {
+    "enabled": true,
+    "size": 20,
+    "color": "rgba(0, 0, 0, 0.85)",
+    "clickEffect": {
+      "enabled": true,
+      "downScale": 0.85,
+      "downDurationMs": 40,
+      "releaseOvershoot": 1.08,
+      "releaseDurationMs": 180
+    },
+    "rippleEffect": {
+      "enabled": true,
+      "ringCount": 2,
+      "maxRadius": 40,
+      "durationMs": 400,
+      "staggerMs": 80,
+      "color": "rgba(66, 133, 244, 0.6)",
+      "strokeWidth": 2
+    },
+    "restingJitter": {
+      "enabled": true,
+      "amplitude": 1.5,
+      "frequency": 0.8
+    }
+  },
   "typing": {
     "baseDelayMs": 80,
     "inconsistency": 0.35,

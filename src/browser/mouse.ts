@@ -1,24 +1,36 @@
 import { Page } from 'puppeteer-core';
 import { ScrollEvent } from '../core/types';
 import { delay } from '../utils/timing';
+import { CursorRenderer } from './cursor-renderer';
 
 /**
  * Realistic mouse movement using Bézier curves.
  *
  * Generates a smooth, human-like path between two points with slight
  * overshoot, variable speed, and natural-looking curvature.
+ *
+ * When a CursorRenderer is attached, each Bézier step also updates
+ * the synthetic cursor overlay in the page DOM, ensuring the visual
+ * cursor captured by CDP screencast matches the Puppeteer mouse position.
  */
 export class MouseAnimator {
   private page: Page;
   private currentX: number = 0;
   private currentY: number = 0;
+  private cursorRenderer: CursorRenderer | null = null;
 
-  constructor(page: Page) {
+  constructor(page: Page, cursorRenderer?: CursorRenderer) {
     this.page = page;
+    this.cursorRenderer = cursorRenderer ?? null;
   }
 
   /** Move the mouse to (x, y) with a realistic animated path. */
   async moveTo(x: number, y: number, durationMs: number = 600): Promise<void> {
+    // Stop resting jitter when starting a new move
+    if (this.cursorRenderer) {
+      await this.cursorRenderer.stopResting(this.page);
+    }
+
     const steps = Math.max(20, Math.floor(durationMs / 16)); // ~60fps
     const points = this.generateBezierPath(
       this.currentX, this.currentY,
@@ -28,6 +40,10 @@ export class MouseAnimator {
 
     for (const point of points) {
       await this.page.mouse.move(point.x, point.y);
+      // Update the synthetic cursor overlay on each step
+      if (this.cursorRenderer) {
+        await this.cursorRenderer.moveTo(this.page, point.x, point.y);
+      }
       await delay(durationMs / steps);
     }
 
@@ -43,8 +59,20 @@ export class MouseAnimator {
   ): Promise<void> {
     const { durationMs = 600, pauseBeforeClick = 150 } = options ?? {};
     await this.moveTo(x, y, durationMs);
-    // Brief human pause before clicking
+
+    // Start resting jitter during the brief human pause before clicking
+    if (this.cursorRenderer) {
+      await this.cursorRenderer.startResting(this.page, x, y);
+    }
     await delay(pauseBeforeClick + Math.random() * 100);
+    if (this.cursorRenderer) {
+      await this.cursorRenderer.stopResting(this.page);
+    }
+
+    // Trigger visual click effects (scaling + ripple)
+    if (this.cursorRenderer) {
+      await this.cursorRenderer.triggerClick(this.page, x, y);
+    }
     await this.page.mouse.click(x, y);
   }
 

@@ -1,7 +1,8 @@
 import puppeteer, { Browser, Page } from 'puppeteer-core';
-import { PipelineConfig, SfxEvent, ZoomKeyframe, ClickButtonType } from '../core/types';
+import { PipelineConfig, SfxEvent, ZoomKeyframe, ClickButtonType, CursorEvent } from '../core/types';
 import { MouseAnimator } from './mouse';
 import { TypingAnimator } from './typing-animator';
+import { CursorRenderer, resolveCursorConfig } from './cursor-renderer';
 import { SfxManager } from '../sfx/manager';
 import { Logger } from '../utils/logger';
 import { humanDelay } from '../utils/timing';
@@ -17,6 +18,7 @@ export class BrowserEngine {
   private _page: Page | null = null;
   private _mouse: MouseAnimator | null = null;
   private _typingAnimator: TypingAnimator | null = null;
+  private _cursorRenderer: CursorRenderer | null = null;
   private sfxManager: SfxManager | null = null;
   private config: PipelineConfig;
   private logger: Logger;
@@ -46,10 +48,17 @@ export class BrowserEngine {
     return this._typingAnimator;
   }
 
-  /** Start tracking SFX events for a new recording clip. */
+  get cursorRenderer(): CursorRenderer | null {
+    return this._cursorRenderer;
+  }
+
+  /** Start tracking SFX and cursor events for a new recording clip. */
   startClipSfxTracking(): void {
     this._clipSfxEvents = [];
     this._clipStartTime = Date.now();
+    if (this._cursorRenderer) {
+      this._cursorRenderer.startClipTracking(this._clipStartTime);
+    }
   }
 
   /** Get the current time offset into the clip, in seconds. */
@@ -60,6 +69,11 @@ export class BrowserEngine {
   /** Collect all SFX events accumulated during the current clip. */
   collectClipSfxEvents(): SfxEvent[] {
     return [...this._clipSfxEvents];
+  }
+
+  /** Collect all cursor events accumulated during the current clip. */
+  collectClipCursorEvents(): CursorEvent[] {
+    return this._cursorRenderer?.collectEvents() ?? [];
   }
 
   async launch(): Promise<void> {
@@ -93,7 +107,14 @@ export class BrowserEngine {
       Object.defineProperty(navigator, 'webdriver', { get: () => false });
     });
 
-    this._mouse = new MouseAnimator(this._page);
+    // Create cursor renderer for synthetic cursor overlay
+    const cursorConfig = resolveCursorConfig(this.config.cursor);
+    if (cursorConfig.enabled) {
+      this._cursorRenderer = new CursorRenderer(cursorConfig, this.logger);
+      await this._cursorRenderer.inject(this._page);
+    }
+
+    this._mouse = new MouseAnimator(this._page, this._cursorRenderer ?? undefined);
 
     // Create typing animator if config is provided
     if (this.config.typing) {
@@ -111,6 +132,10 @@ export class BrowserEngine {
   async navigate(url: string): Promise<void> {
     this.logger.info(`Navigating to ${url}`);
     await this.page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+    // Re-ensure synthetic cursor overlay after page navigation
+    if (this._cursorRenderer) {
+      await this._cursorRenderer.ensureOnPage(this.page);
+    }
     await humanDelay(500, 1000);
   }
 
@@ -234,6 +259,8 @@ export class BrowserEngine {
       const sfx = this.sfxManager.getClickSfx(this.getClipTimeOffset(), clickType);
       if (sfx) this._clipSfxEvents.push(sfx);
     }
+    // Note: cursor click effects (scaling + ripple) are triggered inside
+    // MouseAnimator.moveAndClick() which has direct access to the CursorRenderer.
   }
 
   /** Click an element by selector with mouse animation. */
@@ -283,6 +310,7 @@ export class BrowserEngine {
       this.browser = null;
       this._page = null;
       this._mouse = null;
+      this._cursorRenderer = null;
     }
   }
 }
