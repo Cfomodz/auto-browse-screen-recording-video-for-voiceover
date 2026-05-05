@@ -1,11 +1,45 @@
+import { readFileSync } from 'fs';
+import { extname } from 'path';
 import { Page } from 'puppeteer-core';
 import { CursorConfig, CursorEvent, ClickButtonType } from '../core/types';
 import { Logger } from '../utils/logger';
 
 /**
+ * Fully-resolved cursor configuration with all fields required.
+ * Used internally after merging user config with defaults.
+ */
+export interface ResolvedCursorConfig {
+  enabled: boolean;
+  imagePath?: string;
+  size: number;
+  color: string;
+  clickEffect: {
+    enabled: boolean;
+    downScale: number;
+    downDurationMs: number;
+    releaseOvershoot: number;
+    releaseDurationMs: number;
+  };
+  rippleEffect: {
+    enabled: boolean;
+    ringCount: number;
+    maxRadius: number;
+    durationMs: number;
+    staggerMs: number;
+    color: string;
+    strokeWidth: number;
+  };
+  restingJitter: {
+    enabled: boolean;
+    amplitude: number;
+    frequency: number;
+  };
+}
+
+/**
  * Default cursor configuration — used when `cursor` is omitted from PipelineConfig.
  */
-export const DEFAULT_CURSOR_CONFIG: CursorConfig = {
+export const DEFAULT_CURSOR_CONFIG: ResolvedCursorConfig = {
   enabled: true,
   size: 20,
   color: 'rgba(0, 0, 0, 0.85)',
@@ -32,35 +66,15 @@ export const DEFAULT_CURSOR_CONFIG: CursorConfig = {
   },
 };
 
-/**
- * Shape of the click-effect config passed into the browser context.
- * Mirrors CursorConfig['clickEffect'] but avoids importing DOM types.
- */
-interface ClickEffectParams {
-  enabled: boolean;
-  downScale: number;
-  downDurationMs: number;
-  releaseOvershoot: number;
-  releaseDurationMs: number;
-}
-
-/** Shape of the ripple-effect config passed into the browser context. */
-interface RippleEffectParams {
-  enabled: boolean;
-  ringCount: number;
-  maxRadius: number;
-  durationMs: number;
-  staggerMs: number;
-  color: string;
-  strokeWidth: number;
-}
-
-/** Shape of the resting-jitter config passed into the browser context. */
-interface JitterParams {
-  enabled: boolean;
-  amplitude: number;
-  frequency: number;
-}
+/** Maps file extension to MIME type for cursor image data URLs. */
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+};
 
 /**
  * CursorRenderer — injects a synthetic cursor overlay into the browser page.
@@ -80,17 +94,23 @@ interface JitterParams {
  *
  *  3. **Ripple / Ring Effect** — Expanding, fading concentric circles emitted
  *     from the click origin to draw the viewer's eye.
+ *
+ *  4. **Custom Cursor Image** — When `imagePath` is set in config, the cursor
+ *     element is rendered as an `<img>` using the supplied PNG/SVG (encoded as
+ *     a base64 data URL) instead of the default colored circle.
  */
 export class CursorRenderer {
-  private config: CursorConfig;
+  private config: ResolvedCursorConfig;
   private logger: Logger;
   private injected = false;
+  /** Base64 data URL for the custom cursor image, or null for the default dot. */
+  private _imageDataUrl: string | null = null;
 
   /** Accumulated cursor events during the current recording clip. */
   private _events: CursorEvent[] = [];
   private _clipStartTime = 0;
 
-  constructor(config: CursorConfig, logger: Logger) {
+  constructor(config: ResolvedCursorConfig, logger: Logger) {
     this.config = config;
     this.logger = logger;
   }
@@ -124,14 +144,21 @@ export class CursorRenderer {
     const ce = cfg.clickEffect;
     const re = cfg.rippleEffect;
     const rj = cfg.restingJitter;
+    const imageDataUrl = this._imageDataUrl;
 
-    return `(function(){
-      // ────────────────────── Cursor Element ──────────────────────
-      function ensureCursorElement() {
-        var el = document.getElementById('__synthetic_cursor');
-        if (el) return el;
-
-        el = document.createElement('div');
+    // Pre-compute conditional cursor element creation code so the template
+    // below stays flat and readable.
+    const cursorElementJS = imageDataUrl
+      ? `el = document.createElement('img');
+        el.id = '__synthetic_cursor';
+        el.src = '${imageDataUrl}';
+        el.style.cssText =
+          'position:fixed;top:0;left:0;' +
+          'width:${cfg.size}px;height:${cfg.size}px;' +
+          'pointer-events:none;z-index:2147483647;' +
+          'transform:translate(-50%,-50%);transition:none;' +
+          'will-change:transform;';`
+      : `el = document.createElement('div');
         el.id = '__synthetic_cursor';
         el.style.cssText =
           'position:fixed;top:0;left:0;' +
@@ -139,7 +166,15 @@ export class CursorRenderer {
           'border-radius:50%;background:${cfg.color};' +
           'pointer-events:none;z-index:2147483647;' +
           'transform:translate(-50%,-50%);transition:none;' +
-          'will-change:transform;box-shadow:0 1px 3px rgba(0,0,0,0.3);';
+          'will-change:transform;box-shadow:0 1px 3px rgba(0,0,0,0.3);';`;
+
+    return `(function(){
+      // ────────────────────── Cursor Element ──────────────────────
+      function ensureCursorElement() {
+        var el = document.getElementById('__synthetic_cursor');
+        if (el) return el;
+
+        ${cursorElementJS}
         document.documentElement.appendChild(el);
 
         var style = document.createElement('style');
@@ -283,15 +318,41 @@ export class CursorRenderer {
   /**
    * Inject the cursor overlay element + animation styles into the page.
    * Uses `evaluateOnNewDocument` so the cursor is created on every navigation.
+   *
+   * When `config.imagePath` is set, the image is read from disk once here and
+   * embedded as a base64 data URL so the browser context has no filesystem
+   * dependency. If the file cannot be read, a warning is logged and the
+   * renderer falls back to the default colored-circle cursor.
    */
   async inject(page: Page): Promise<void> {
     if (!this.config.enabled) return;
+
+    if (this.config.imagePath) {
+      this._imageDataUrl = this.loadImageAsDataUrl(this.config.imagePath);
+    }
 
     const script = this.buildBrowserScript();
     await page.evaluateOnNewDocument(script);
 
     this.injected = true;
     this.logger.info('Cursor renderer injected into page.');
+  }
+
+  /**
+   * Read an image file from disk and return it as a base64 data URL.
+   * Returns null (and logs a warning) if the file cannot be read.
+   */
+  private loadImageAsDataUrl(imagePath: string): string | null {
+    try {
+      const data = readFileSync(imagePath);
+      const ext = extname(imagePath).toLowerCase();
+      const mime = IMAGE_MIME_TYPES[ext] ?? 'image/png';
+      return `data:${mime};base64,${data.toString('base64')}`;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`CursorRenderer: failed to load cursor image from "${imagePath}": ${message}. Using default cursor.`);
+      return null;
+    }
   }
 
   /**
@@ -383,9 +444,9 @@ export class CursorRenderer {
 
 /**
  * Resolve cursor config: merges user config with defaults.
- * Returns the effective CursorConfig, or a disabled stub if cursor is off.
+ * Returns the effective ResolvedCursorConfig, or a disabled stub if cursor is off.
  */
-export function resolveCursorConfig(userConfig?: CursorConfig): CursorConfig {
+export function resolveCursorConfig(userConfig?: CursorConfig): ResolvedCursorConfig {
   if (!userConfig) return DEFAULT_CURSOR_CONFIG;
   if (!userConfig.enabled) return { ...DEFAULT_CURSOR_CONFIG, enabled: false };
 

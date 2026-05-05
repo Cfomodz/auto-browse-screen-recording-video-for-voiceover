@@ -5,7 +5,7 @@ export type { ModuleExecuteResult } from './core/module';
 export { BrowserEngine } from './browser/engine';
 export { MouseAnimator } from './browser/mouse';
 export { TypingAnimator } from './browser/typing-animator';
-export { CursorRenderer, resolveCursorConfig, DEFAULT_CURSOR_CONFIG } from './browser/cursor-renderer';
+export { CursorRenderer, ResolvedCursorConfig, resolveCursorConfig, DEFAULT_CURSOR_CONFIG } from './browser/cursor-renderer';
 export { TranscriptAnalyzer } from './modules/transcript-analyzer';
 export { ScreenRecorder } from './modules/screen-recorder';
 export { VideoAssembler } from './modules/video-assembler';
