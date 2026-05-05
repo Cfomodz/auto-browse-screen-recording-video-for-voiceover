@@ -166,54 +166,60 @@ export interface TypingClipMeta {
 
 // ─── Cursor Effects ─────────────────────────────────────────────────────────
 
-/** Cursor rendering configuration. */
-export interface CursorConfig {
+export interface CursorClickEffectConfig {
   enabled: boolean;
+  /** Scale factor on mousedown (e.g. 0.85 = shrink 15%). */
+  downScale: number;
+  /** Duration of the down animation in ms. */
+  downDurationMs: number;
+  /** Spring overshoot on release (e.g. 1.08 = 8% overshoot). */
+  releaseOvershoot: number;
+  /** Duration of the release spring animation in ms. */
+  releaseDurationMs: number;
+}
+
+export interface CursorRippleEffectConfig {
+  enabled: boolean;
+  /** Number of concentric rings to emit per click. */
+  ringCount: number;
+  /** Maximum radius the ring expands to (in pixels). */
+  maxRadius: number;
+  /** Duration of each ring's expand + fade animation in ms. */
+  durationMs: number;
+  /** Delay between successive rings in ms. */
+  staggerMs: number;
+  /** Ring color as CSS color string. */
+  color: string;
+  /** Ring stroke width in pixels. */
+  strokeWidth: number;
+}
+
+export interface CursorRestingJitterConfig {
+  enabled: boolean;
+  /** Max displacement in pixels from the resting position. */
+  amplitude: number;
+  /** Speed of the noise oscillation (lower = smoother). */
+  frequency: number;
+}
+
+/** Cursor rendering configuration overrides. Runtime defaults are merged for omitted fields. */
+export interface CursorConfig {
+  enabled?: boolean;
   /** Path to a custom cursor image (PNG with transparency). Uses default SVG dot if omitted. */
   imagePath?: string;
   /** Cursor size in pixels (diameter for the default dot, or scale target for custom image). */
-  size: number;
+  size?: number;
   /** Cursor color as CSS color string (only for default cursor). */
-  color: string;
+  color?: string;
 
   /** Click scaling (haptic visual feedback). */
-  clickEffect: {
-    enabled: boolean;
-    /** Scale factor on mousedown (e.g. 0.85 = shrink 15%). */
-    downScale: number;
-    /** Duration of the down animation in ms. */
-    downDurationMs: number;
-    /** Spring overshoot on release (e.g. 1.08 = 8% overshoot). */
-    releaseOvershoot: number;
-    /** Duration of the release spring animation in ms. */
-    releaseDurationMs: number;
-  };
+  clickEffect?: Partial<CursorClickEffectConfig>;
 
   /** Ripple / ring effect on click. */
-  rippleEffect: {
-    enabled: boolean;
-    /** Number of concentric rings to emit per click. */
-    ringCount: number;
-    /** Maximum radius the ring expands to (in pixels). */
-    maxRadius: number;
-    /** Duration of each ring's expand + fade animation in ms. */
-    durationMs: number;
-    /** Delay between successive rings in ms. */
-    staggerMs: number;
-    /** Ring color as CSS color string. */
-    color: string;
-    /** Ring stroke width in pixels. */
-    strokeWidth: number;
-  };
+  rippleEffect?: Partial<CursorRippleEffectConfig>;
 
   /** Resting jitter — subtle Perlin-noise micro-movement when idle. */
-  restingJitter: {
-    enabled: boolean;
-    /** Max displacement in pixels from the resting position. */
-    amplitude: number;
-    /** Speed of the noise oscillation (lower = smoother). */
-    frequency: number;
-  };
+  restingJitter?: Partial<CursorRestingJitterConfig>;
 }
 
 /**
