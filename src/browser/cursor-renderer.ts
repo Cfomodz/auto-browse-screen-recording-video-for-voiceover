@@ -110,6 +110,12 @@ export class CursorRenderer {
   private _events: CursorEvent[] = [];
   private _clipStartTime = 0;
 
+  /** Last known cursor position, used to restore position after navigation and for rest-end events. */
+  private _currentX = 0;
+  private _currentY = 0;
+  /** Whether the cursor is currently in resting-jitter mode. */
+  private _isResting = false;
+
   constructor(config: ResolvedCursorConfig, logger: Logger) {
     this.config = config;
     this.logger = logger;
@@ -356,16 +362,22 @@ export class CursorRenderer {
   }
 
   /**
-   * Ensure the cursor element exists on the current page.
-   * Call after navigation to re-create if the page was replaced.
+   * Ensure the cursor element exists on the current page and is positioned at
+   * the last known coordinates. Call after navigation to re-create the overlay
+   * and avoid the cursor snapping to (0, 0) until the next mouse move.
    */
   async ensureOnPage(page: Page): Promise<void> {
     if (!this.config.enabled) return;
+    const x = this._currentX;
+    const y = this._currentY;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await page.evaluate(() => {
+    await page.evaluate((px: number, py: number) => {
       const api = (globalThis as any).__syntheticCursor;
-      if (api) api.show();
-    });
+      if (api) {
+        api.moveTo(px, py);
+        api.show();
+      }
+    }, x, y);
   }
 
   /**
@@ -374,6 +386,8 @@ export class CursorRenderer {
    */
   async moveTo(page: Page, x: number, y: number): Promise<void> {
     if (!this.config.enabled) return;
+    this._currentX = x;
+    this._currentY = y;
     this.recordEvent('move', x, y);
     await page.evaluate((px: number, py: number) => {
       const api = (globalThis as any).__syntheticCursor;
@@ -387,6 +401,7 @@ export class CursorRenderer {
    */
   async startResting(page: Page, x: number, y: number): Promise<void> {
     if (!this.config.enabled || !this.config.restingJitter.enabled) return;
+    this._isResting = true;
     this.recordEvent('rest-start', x, y);
     await page.evaluate(() => {
       const api = (globalThis as any).__syntheticCursor;
@@ -396,10 +411,14 @@ export class CursorRenderer {
 
   /**
    * Stop resting jitter.
+   * No-ops (and does not record a `rest-end` event) when the cursor was not
+   * actually resting, preventing spurious events on every `moveTo()` call.
    */
   async stopResting(page: Page): Promise<void> {
     if (!this.config.enabled || !this.config.restingJitter.enabled) return;
-    this.recordEvent('rest-end', 0, 0);
+    if (!this._isResting) return;
+    this._isResting = false;
+    this.recordEvent('rest-end', this._currentX, this._currentY);
     await page.evaluate(() => {
       const api = (globalThis as any).__syntheticCursor;
       if (api) api.stopResting();
