@@ -164,22 +164,27 @@ export class Pipeline extends EventEmitter {
           const clipName = this.sanitizeFilename(`${topic.topic}_${actionType}`);
           const existingPath = path.join(clipsDir, `${clipName}.mp4`);
 
-          if (fs.existsSync(existingPath)) {
-            const stat = fs.statSync(existingPath);
-            if (stat.size > 0) {
-              this.logger.debug(`Pickup: using existing clip ${clipName}.mp4`);
-              if (this.config.sfx?.enabled) {
-                const hasAudio = await hasAudioStream(existingPath);
-                if (hasAudio) {
-                  const level = measureAudioLevel(existingPath);
-                  if (level.isSilent) {
-                    throw new Error(
-                      `Existing clip "${clipName}" has audio track but it's too quiet (peak ${level.peakDb.toFixed(1)} dB). ` +
-                        `Delete the clip and re-run to re-bake with higher sfx.volume.`
-                    );
-                  }
+          if (fs.existsSync(existingPath) && fs.statSync(existingPath).size > 0) {
+            let pickupOk = true;
+            if (this.config.sfx?.enabled) {
+              const hasAudio = await hasAudioStream(existingPath);
+              if (hasAudio) {
+                const level = measureAudioLevel(existingPath);
+                if (level.isSilent) {
+                  // Clip was baked with old (too-quiet) settings — re-record it
+                  // instead of aborting the whole run.
+                  this.logger.warn(
+                    `Existing clip "${clipName}" audio too quiet (peak ${level.peakDb.toFixed(1)} dB); ` +
+                      `re-recording with current sfx settings.`
+                  );
+                  fs.unlinkSync(existingPath);
+                  pickupOk = false;
                 }
               }
+            }
+
+            if (pickupOk) {
+              this.logger.debug(`Pickup: using existing clip ${clipName}.mp4`);
               const durationSeconds = await getVideoDuration(existingPath);
               const segStart = topic.segments[0]?.startTime ?? 0;
               const segEnd = topic.segments[topic.segments.length - 1]?.endTime ?? segStart + durationSeconds;
@@ -192,13 +197,18 @@ export class Pipeline extends EventEmitter {
                 endTime: segEnd,
               };
               recordedSegments.push(recorded);
-              await this.writeClipTimingJson(
-                existingPath,
-                clipName,
-                durationSeconds,
-                [],
-                []
-              );
+              // Keep the timing JSON from the original recording — it has the
+              // real SFX/zoom data; only write a stub when none exists.
+              const timingJsonPath = path.join(clipsDir, `${clipName}.json`);
+              if (!fs.existsSync(timingJsonPath)) {
+                await this.writeClipTimingJson(
+                  existingPath,
+                  clipName,
+                  durationSeconds,
+                  [],
+                  []
+                );
+              }
               this.emit_event({ type: 'recording-skip', segment: recorded });
               continue;
             }

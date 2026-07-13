@@ -114,6 +114,16 @@ export class BrowserEngine {
     if (cursorConfig.enabled) {
       this._cursorRenderer = new CursorRenderer(cursorConfig, this.logger);
       await this._cursorRenderer.inject(this._page);
+
+      // Every main-frame navigation recreates the overlay at (0,0) — restore
+      // it to the last known position. Covers Enter-key form submissions,
+      // link clicks, and redirects, not just explicit navigate() calls.
+      this._page.on('framenavigated', (frame) => {
+        if (!this._page || frame !== this._page.mainFrame() || !this._cursorRenderer) return;
+        this._cursorRenderer.ensureOnPage(this._page).catch(() => {
+          // Execution context may be mid-navigation; the next move corrects it.
+        });
+      });
     }
 
     this._mouse = new MouseAnimator(this._page, this._cursorRenderer ?? undefined);
@@ -244,6 +254,10 @@ export class BrowserEngine {
     await humanDelay(200, 400);
     await this.page.keyboard.press('Enter');
     await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
+    // The results page recreated the cursor overlay — restore its position
+    if (this._cursorRenderer) {
+      await this._cursorRenderer.ensureOnPage(this.page).catch(() => {});
+    }
     await humanDelay(1000, 2000);
   }
 
