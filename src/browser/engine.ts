@@ -87,6 +87,8 @@ export class BrowserEngine {
       headless: false,  // Must be visible for screen recording
       defaultViewport: null,
       args: [
+        ...(process.env.BROLL_NO_SANDBOX ? ['--no-sandbox', '--disable-setuid-sandbox'] : []),
+        ...(process.env.BROLL_PROXY ? [`--proxy-server=${process.env.BROLL_PROXY}`, '--ignore-certificate-errors'] : []),
         `--window-size=${this.config.viewport.width},${this.config.viewport.height}`,
         '--disable-blink-features=AutomationControlled',
         '--no-first-run',
@@ -164,6 +166,9 @@ export class BrowserEngine {
   /** Get the search URL for the configured search engine. */
   getSearchUrl(query: string): string {
     const encoded = encodeURIComponent(query);
+    if (process.env.BROLL_SEARCH_URL_OVERRIDE) {
+      return `${process.env.BROLL_SEARCH_URL_OVERRIDE}?q=${encoded}`;
+    }
     switch (this.config.searchEngine) {
       case 'brave':
         return `https://search.brave.com/search?q=${encoded}`;
