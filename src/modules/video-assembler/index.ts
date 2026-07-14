@@ -8,21 +8,41 @@ import { getVideoDuration, hasAudioStream } from '../../utils/video';
 import { createSilentWav } from '../../utils/audio';
 
 /**
+ * A recorded segment placed on the master (voiceover) timeline.
+ *
+ * `start`/`end` are the resolved position of the clip's content after
+ * overlap resolution — they may differ from the segment's transcript
+ * window when topics overlap. `leadGap` is dead time between the previous
+ * placement's end and this clip's start, filled by freezing this clip's
+ * first frame. `tailPad` extends the clip's last frame (only ever set on
+ * the final placement, to reach the end of the voiceover).
+ */
+interface PlacedSegment {
+  seg: RecordedSegment;
+  start: number;
+  end: number;
+  leadGap: number;
+  tailPad: number;
+}
+
+/**
  * Video Assembler module.
  *
  * Takes the individual recorded screen clips and the voiceover audio,
- * applies dynamic zoom/pan effects and overlays SFX audio, then
- * trims/extends each clip to match its corresponding transcript timing,
- * concatenates everything, and muxes the audio to produce the final video.
+ * applies dynamic zoom/pan effects and overlays SFX audio, then places
+ * each clip AT ITS TRANSCRIPT TIME on a master timeline whose length is
+ * the voiceover duration. Gaps between clips are filled by freezing
+ * neighbouring frames, overlapping windows are resolved first-wins, and
+ * the final mux never truncates the voiceover.
  *
  * Post-processing pipeline per clip:
  *   1. Apply zoom/pan filter (if zoom keyframes exist)
- *   2. Trim or speed-adjust to match transcript timing
+ *   2. Trim to the clip's placed window; freeze frames to fill gaps
  *   3. Mix in SFX audio events (click/typing sounds)
  *
  * Final assembly:
- *   4. Concatenate all processed clips
- *   5. Mix voiceover audio + SFX track
+ *   4. Concatenate all processed clips (now spanning the full timeline)
+ *   5. Mix voiceover audio + SFX track (no attenuation, no truncation)
  *   6. Output final video
  */
 export class VideoAssembler {
@@ -95,7 +115,7 @@ export class VideoAssembler {
         const delayMs = Math.round(event.timeOffset * 1000);
         return `[${i + 1}:a]adelay=${delayMs}|${delayMs},volume=${sfxVolume}[sfx${i}]`;
       }),
-      `[0:a]${sfxLabels}amix=inputs=${shiftedEvents.length + 1}:duration=first:dropout_transition=0[out]`,
+      `[0:a]${sfxLabels}amix=inputs=${shiftedEvents.length + 1}:duration=first:dropout_transition=0:normalize=0[out]`,
     ].join(';');
 
     const silencePath = createSilentWav(tmpDir, videoDuration);
@@ -165,23 +185,36 @@ export class VideoAssembler {
     );
     fs.mkdirSync(path.dirname(outputPath), { recursive: true });
 
-    // Sort segments chronologically
-    const sorted = [...segments].sort((a, b) => a.startTime - b.startTime);
+    // The voiceover defines the master timeline: the final video must span
+    // exactly its duration, with each clip placed at its transcript time.
+    let timelineDuration: number;
+    try {
+      timelineDuration = await getVideoDuration(this.config.audioPath);
+    } catch (err) {
+      timelineDuration = segments.reduce((max, s) => Math.max(max, s.endTime), 0);
+      this.logger.warn(
+        `Could not probe voiceover duration (${(err as Error).message}); ` +
+          `falling back to last segment end (${timelineDuration.toFixed(1)}s).`
+      );
+    }
 
-    // Step 1: Process each clip (zoom + trim + SFX)
-    const processedPaths = await this.processClips(sorted);
+    // Step 1: Place segments on the timeline (resolve overlaps, compute gaps)
+    const placements = this.placeSegmentsOnTimeline(segments, timelineDuration);
+
+    // Step 2: Process each clip (zoom + trim + gap fill)
+    const processedPaths = await this.processClips(placements);
 
     if (processedPaths.length === 0) {
       this.logger.warn('No clips to assemble.');
       return outputPath;
     }
 
-    // Step 2: Concatenate all processed clips
+    // Step 3: Concatenate all processed clips (spans the full timeline)
     const concatPath = path.join(this.config.outputDir, 'concat_video.mp4');
     await this.concatenateClips(processedPaths, concatPath);
 
-    // Step 3: Build the SFX audio track (if any clips have SFX events)
-    const allSfxEvents = this.buildGlobalSfxTimeline(sorted);
+    // Step 4: Build the SFX audio track (if any clips have SFX events)
+    const allSfxEvents = this.buildGlobalSfxTimeline(placements);
     let sfxTrackPath: string | null = null;
 
     if (allSfxEvents.length > 0) {
@@ -189,7 +222,7 @@ export class VideoAssembler {
       await this.buildSfxTrack(allSfxEvents, sfxTrackPath);
     }
 
-    // Step 4: Mux voiceover + SFX + video
+    // Step 5: Mux voiceover + SFX + video
     await this.muxFinal(concatPath, this.config.audioPath, sfxTrackPath, outputPath);
 
     // Cleanup
@@ -200,15 +233,77 @@ export class VideoAssembler {
   }
 
   /**
-   * Process each clip: apply zoom filter, trim to target duration.
+   * Place segments on the master timeline.
+   *
+   * Sorted by transcript startTime; overlapping windows are resolved
+   * first-wins (a later segment starts where the previous one ended, and is
+   * dropped entirely if its window is consumed — e.g. a second action
+   * recorded for the same topic window). Gaps before each clip and after the
+   * last one are recorded so processClips can fill them with frozen frames,
+   * making the concatenated video span exactly [0, timelineDuration].
    */
-  private async processClips(segments: RecordedSegment[]): Promise<string[]> {
+  private placeSegmentsOnTimeline(
+    segments: RecordedSegment[],
+    timelineDuration: number
+  ): PlacedSegment[] {
+    const MIN_WINDOW = 0.25; // seconds — drop slivers left over from overlaps
+
+    const sorted = [...segments]
+      .filter((seg) => {
+        if (fs.existsSync(seg.filePath) && fs.statSync(seg.filePath).size > 0) return true;
+        this.logger.warn(`Skipping empty clip: ${seg.filePath}`);
+        return false;
+      })
+      .sort((a, b) => a.startTime - b.startTime);
+
+    const placements: PlacedSegment[] = [];
+    let cursor = 0;
+
+    for (const seg of sorted) {
+      const start = Math.max(seg.startTime, cursor);
+      const end = Math.min(Math.max(seg.endTime, start), timelineDuration);
+
+      if (end - start < MIN_WINDOW) {
+        this.logger.info(
+          `Dropping "${path.basename(seg.filePath)}" — window ` +
+            `${seg.startTime.toFixed(1)}–${seg.endTime.toFixed(1)}s already covered or beyond voiceover.`
+        );
+        continue;
+      }
+
+      placements.push({ seg, start, end, leadGap: start - cursor, tailPad: 0 });
+      cursor = end;
+    }
+
+    // Extend the last clip's final frame to the end of the voiceover.
+    if (placements.length > 0 && timelineDuration - cursor > 0.01) {
+      placements[placements.length - 1].tailPad = timelineDuration - cursor;
+    }
+
+    for (const p of placements) {
+      this.logger.info(
+        `Timeline: ${path.basename(p.seg.filePath)} @ ${p.start.toFixed(1)}–${p.end.toFixed(1)}s` +
+          (p.leadGap > 0.01 ? ` (freeze-fill ${p.leadGap.toFixed(1)}s gap before)` : '') +
+          (p.tailPad > 0.01 ? ` (hold last frame ${p.tailPad.toFixed(1)}s to end)` : '')
+      );
+    }
+
+    return placements;
+  }
+
+  /**
+   * Process each placed clip: apply zoom filter, trim content to its window,
+   * and freeze first/last frames to fill timeline gaps. The output file's
+   * duration is exactly leadGap + (end - start) + contentShortfall-pad + tailPad,
+   * so concatenating all outputs reproduces the master timeline.
+   */
+  private async processClips(placements: PlacedSegment[]): Promise<string[]> {
     const ffmpeg = require('fluent-ffmpeg') as typeof import('fluent-ffmpeg');
     const processedPaths: string[] = [];
 
-    for (let i = 0; i < segments.length; i++) {
-      const seg = segments[i];
-      const targetDuration = seg.endTime - seg.startTime;
+    for (let i = 0; i < placements.length; i++) {
+      const { seg, start, end, leadGap, tailPad } = placements[i];
+      const contentDuration = end - start;
       const processedPath = path.join(
         this.config.outputDir,
         'processed',
@@ -216,12 +311,7 @@ export class VideoAssembler {
       );
       fs.mkdirSync(path.dirname(processedPath), { recursive: true });
 
-      // Skip empty clip markers
-      const stat = fs.statSync(seg.filePath);
-      if (stat.size === 0) {
-        this.logger.warn(`Skipping empty clip: ${seg.filePath}`);
-        continue;
-      }
+      const actualDuration = await getVideoDuration(seg.filePath).catch(() => seg.durationSeconds);
 
       // Build video filters
       const videoFilters: string[] = [];
@@ -229,7 +319,6 @@ export class VideoAssembler {
       // Zoom/pan filter — keyframes are relative to module start; shift by the
       // recording-start offset so they align with the actual video timeline.
       if (this.zoomEngine && seg.zoomKeyframes && seg.zoomKeyframes.length > 0) {
-        const actualDuration = await getVideoDuration(seg.filePath).catch(() => seg.durationSeconds);
         const zoomOffset = Math.max(0, actualDuration - seg.durationSeconds);
         const shiftedKeyframes = seg.zoomKeyframes.map((kf) => ({
           ...kf,
@@ -247,29 +336,38 @@ export class VideoAssembler {
         }
       }
 
-      // Duration adjustment: trim if too long; hold last frame + pad audio if too short.
-      // Never slow down the video — that would desync SFX, clicks, and typing from visuals.
-      const padDuration =
-        seg.durationSeconds < targetDuration && targetDuration - seg.durationSeconds > 0.05
-          ? targetDuration - seg.durationSeconds
-          : 0;
+      // Trim content to the placed window. Never slow down the video — that
+      // would desync SFX, clicks, and typing from visuals.
+      videoFilters.push(`trim=duration=${contentDuration.toFixed(3)}`, 'setpts=PTS-STARTPTS');
 
-      if (padDuration > 0) {
-        videoFilters.push(`tpad=stop_mode=clone:stop_duration=${padDuration.toFixed(3)}`);
+      // Hold the last frame when the recording is shorter than its window,
+      // plus any tail pad to reach the end of the voiceover; freeze the first
+      // frame to fill the gap before this clip.
+      const contentShortfall = Math.max(0, contentDuration - actualDuration);
+      const stopPad = contentShortfall + tailPad;
+      const slotDuration = leadGap + contentDuration + tailPad;
+
+      if (leadGap > 0.001 || stopPad > 0.001) {
+        const tpadArgs: string[] = [];
+        if (leadGap > 0.001) tpadArgs.push(`start_mode=clone:start_duration=${leadGap.toFixed(3)}`);
+        if (stopPad > 0.001) tpadArgs.push(`stop_mode=clone:stop_duration=${stopPad.toFixed(3)}`);
+        videoFilters.push(`tpad=${tpadArgs.join(':')}`);
       }
 
       const inputHasAudio = seg.sfxBaked || (await hasAudioStream(seg.filePath));
       const audioFilters: string[] = [];
-      if (padDuration > 0 && inputHasAudio) {
-        audioFilters.push(`apad=pad_dur=${padDuration.toFixed(3)}`);
+      if (inputHasAudio) {
+        audioFilters.push(`atrim=duration=${contentDuration.toFixed(3)}`, 'asetpts=PTS-STARTPTS');
+        if (leadGap > 0.001) {
+          audioFilters.push(`adelay=${Math.round(leadGap * 1000)}:all=1`);
+        }
+        // Pad with silence to the exact slot length so audio and video stay
+        // the same duration through concat.
+        audioFilters.push(`apad=whole_dur=${slotDuration.toFixed(3)}`);
       }
 
       await new Promise<void>((resolve, reject) => {
         let cmd = ffmpeg().input(seg.filePath);
-
-        if (seg.durationSeconds > targetDuration) {
-          cmd = cmd.duration(targetDuration);
-        }
 
         const outputOpts = [
           '-c:v libx264',
@@ -282,28 +380,21 @@ export class VideoAssembler {
         let silencePath: string | null = null;
         if (inputHasAudio) {
           outputOpts.push('-map', '0:a:0');
-          if (audioFilters.length > 0) {
-            outputOpts.push('-af', audioFilters.join(','), '-c:a', 'aac', '-b:a', '192k');
-          } else {
-            outputOpts.push('-c:a', 'aac', '-b:a', '192k');
-          }
+          outputOpts.push('-af', audioFilters.join(','), '-c:a', 'aac', '-b:a', '192k');
         } else {
           // Add silent audio so concat gets consistent streams (no lavfi)
-          const silenceDuration = seg.endTime - seg.startTime;
           silencePath = createSilentWav(
             path.join(this.config.outputDir, 'tmp'),
-            silenceDuration
+            slotDuration
           );
           cmd = cmd.input(silencePath);
           outputOpts.push('-map', '1:a:0', '-c:a', 'aac', '-b:a', '192k');
         }
 
-        if (videoFilters.length > 0) {
-          // Pass -vf directly via outputOptions to preserve escaped commas in
-          // zoom-engine crop expressions. fluent-ffmpeg's videoFilters() splits
-          // on commas, which mangles the \, inside FFmpeg if() expressions.
-          cmd = cmd.outputOptions(['-vf', videoFilters.join(',')]);
-        }
+        // Pass -vf directly via outputOptions to preserve escaped commas in
+        // zoom-engine crop expressions. fluent-ffmpeg's videoFilters() splits
+        // on commas, which mangles the \, inside FFmpeg if() expressions.
+        cmd = cmd.outputOptions(['-vf', videoFilters.join(',')]);
 
         cmd
           .outputOptions(outputOpts)
@@ -330,24 +421,23 @@ export class VideoAssembler {
   }
 
   /**
-   * Build a global SFX timeline by adjusting each segment's SFX events
-   * to account for the segment's position in the final video.
+   * Build a global SFX timeline from each clip's placed position on the
+   * master timeline. Events beyond a clip's trimmed window are dropped.
    * Skips segments that have SFX already baked into the clip.
    */
-  private buildGlobalSfxTimeline(segments: RecordedSegment[]): SfxEvent[] {
+  private buildGlobalSfxTimeline(placements: PlacedSegment[]): SfxEvent[] {
     const globalEvents: SfxEvent[] = [];
-    let cumulativeOffset = 0;
 
-    for (const seg of segments) {
-      if (!seg.sfxBaked && seg.sfxEvents) {
-        for (const event of seg.sfxEvents) {
-          globalEvents.push({
-            ...event,
-            timeOffset: cumulativeOffset + event.timeOffset,
-          });
-        }
+    for (const { seg, start, end } of placements) {
+      if (seg.sfxBaked || !seg.sfxEvents) continue;
+      const window = end - start;
+      for (const event of seg.sfxEvents) {
+        if (event.timeOffset >= window) continue; // trimmed away with the video
+        globalEvents.push({
+          ...event,
+          timeOffset: start + event.timeOffset,
+        });
       }
-      cumulativeOffset += seg.endTime - seg.startTime;
     }
 
     return globalEvents;
@@ -391,7 +481,7 @@ export class VideoAssembler {
       const mixInputs = filterParts.map((_, i) => `[sfx${i}]`).join('');
       const filterGraph = [
         ...filterParts,
-        `${mixInputs}amix=inputs=${filterParts.length}:duration=longest[out]`,
+        `${mixInputs}amix=inputs=${filterParts.length}:duration=longest:normalize=0[out]`,
       ].join(';');
 
       cmd
@@ -426,6 +516,8 @@ export class VideoAssembler {
         .input(videoPath)
         .input(voiceoverPath);
 
+      // duration=longest + normalize=0: never truncate the voiceover, never
+      // attenuate it — each input keeps the gain it was given upstream.
       if (sfxTrackPath && fs.existsSync(sfxTrackPath) && fs.statSync(sfxTrackPath).size > 0) {
         // Three inputs: concat (video+audio with baked SFX), voiceover, extra SFX track
         cmd = cmd.input(sfxTrackPath);
@@ -433,13 +525,12 @@ export class VideoAssembler {
         cmd
           .complexFilter([
             // Mix concat audio (baked SFX) + voiceover + extra SFX for non-baked segments
-            '[0:a][1:a][2:a]amix=inputs=3:duration=shortest:dropout_transition=2[aout]',
+            '[0:a][1:a][2:a]amix=inputs=3:duration=longest:dropout_transition=0:normalize=0[aout]',
           ], ['aout'])
           .outputOptions([
             '-c:v copy',
             '-c:a aac',
             '-b:a 192k',
-            '-shortest',
             '-map 0:v:0',
           ])
           .output(outputPath)
@@ -453,13 +544,12 @@ export class VideoAssembler {
         // Concat has video+audio (baked SFX); mix with voiceover
         cmd
           .complexFilter([
-            '[0:a][1:a]amix=inputs=2:duration=shortest:dropout_transition=2[aout]',
+            '[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=0:normalize=0[aout]',
           ], ['aout'])
           .outputOptions([
             '-c:v copy',
             '-c:a aac',
             '-b:a 192k',
-            '-shortest',
             '-map 0:v:0',
           ])
           .output(outputPath)

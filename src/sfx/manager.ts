@@ -328,8 +328,15 @@ export class SfxManager {
     const charCount = text.length;
     const keystrokeCount = (c: TypingClipMeta) => (c.keystrokes ?? []).length;
 
+    // Exclude degenerate clips (slicing artifacts): a 66ms single-keystroke
+    // clip would otherwise win the char-diff score for short words and drive
+    // near-instant visual typing with an inaudible sound.
+    const isDegenerate = (c: TypingClipMeta) => c.durationMs < 200 || keystrokeCount(c) < 2;
+    const usableClips = this.typingClips.filter((c) => !isDegenerate(c));
+    const pool = usableClips.length > 0 ? usableClips : this.typingClips;
+
     // Score each clip: character/keystroke alignment matters most for audio-visual sync
-    const scored = this.typingClips
+    const scored = pool
       .filter((clip) => keystrokeCount(clip) >= charCount * 0.5) // Need enough timestamps
       .map((clip) => {
         let score = 0;
@@ -358,7 +365,7 @@ export class SfxManager {
         `No typing clip has enough keystrokes for ${charCount} chars; using best available`
       );
     }
-    const fallback = this.typingClips.map((clip) => {
+    const fallback = pool.map((clip) => {
       let score = 0;
       const charDiff = Math.abs(clip.typedText.length - charCount);
       score -= charDiff * 5;
@@ -467,7 +474,13 @@ export class SfxManager {
       // Consume as many words as the matched clip covers
       const coveredWords = Math.max(1, result.keystrokes.wordCount);
       const chunkWords = wordsRemaining.slice(0, coveredWords);
-      const chunkText = chunkWords.join(' ');
+      wordsRemaining = wordsRemaining.slice(coveredWords);
+
+      // Non-final chunks carry their joining space so the typed text is
+      // exactly the input ("car wash near" + "me" would otherwise render as
+      // "car wash nearme"). Clips usually end on a space keystroke, so the
+      // cadence data covers the extra character.
+      const chunkText = chunkWords.join(' ') + (wordsRemaining.length > 0 ? ' ' : '');
 
       chunks.push({
         event: result.event,
@@ -476,7 +489,6 @@ export class SfxManager {
       });
 
       currentOffset += result.event.durationSeconds;
-      wordsRemaining = wordsRemaining.slice(coveredWords);
     }
 
     return chunks;

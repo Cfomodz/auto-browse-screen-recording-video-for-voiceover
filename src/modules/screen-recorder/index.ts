@@ -148,14 +148,18 @@ export class ScreenRecorder {
     const targetFps = this.config.video.fps;
 
     if (this.frameTimestamps.length >= 2) {
-      return this.assembleFramesConcat(outputPath, targetFps);
+      return this.assembleFramesConcat(outputPath, targetFps, realDurationSeconds);
     }
 
     return this.assembleFramesFixedRate(outputPath, realDurationSeconds, targetFps);
   }
 
   /** Concat-demuxer assembly: each frame gets its real wall-clock duration. */
-  private assembleFramesConcat(outputPath: string, targetFps: number): Promise<void> {
+  private assembleFramesConcat(
+    outputPath: string,
+    targetFps: number,
+    realDurationSeconds?: number
+  ): Promise<void> {
     const concatListPath = path.join(this.frameDir, 'concat_frames.txt');
     const lines: string[] = ['ffconcat version 1.0'];
 
@@ -165,6 +169,15 @@ export class ScreenRecorder {
       let durationMs: number;
       if (i < this.frameTimestamps.length - 1) {
         durationMs = this.frameTimestamps[i + 1] - this.frameTimestamps[i];
+      } else if (
+        realDurationSeconds != null &&
+        realDurationSeconds * 1000 > this.frameTimestamps[i]
+      ) {
+        // CDP screencast only delivers frames on repaint, so idle time at the
+        // end of a module produces no frames. Hold the final frame until the
+        // module's real end time so the video duration matches wall clock —
+        // all SFX/zoom offset math relies on this.
+        durationMs = realDurationSeconds * 1000 - this.frameTimestamps[i];
       } else {
         durationMs = i > 0
           ? this.frameTimestamps[i] - this.frameTimestamps[i - 1]
@@ -172,6 +185,11 @@ export class ScreenRecorder {
       }
       lines.push(`duration ${Math.max(0.001, durationMs / 1000).toFixed(6)}`);
     }
+
+    // The concat demuxer ignores the final entry's duration unless the file
+    // is listed once more — without this the video ends at the last frame's
+    // timestamp instead of the module's real end time.
+    lines.push(`file frame_${String(this.frameTimestamps.length - 1).padStart(6, '0')}.png`);
 
     fs.writeFileSync(concatListPath, lines.join('\n'), 'utf-8');
 
