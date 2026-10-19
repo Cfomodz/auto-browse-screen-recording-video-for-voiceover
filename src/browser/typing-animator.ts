@@ -4,6 +4,9 @@ import { SfxManager } from '../sfx/manager';
 import { delay } from '../utils/timing';
 import { Logger } from '../utils/logger';
 
+/** Audio kept after a chunk's last keystroke so its sound can ring out. */
+const TYPING_TAIL_MS = 150;
+
 /**
  * Keystroke plan entry — what we're going to type and when.
  * Built before execution so we can match audio clips to the sequence.
@@ -68,12 +71,22 @@ export class TypingAnimator {
     if (this.sfxManager) {
       const chunks = this.sfxManager.buildTypingTimelineWithKeystrokes(text, clipTimeOffset / 1000);
       if (chunks.length > 0) {
-        let totalMs = 0;
+        const typingStart = Date.now();
         for (const chunk of chunks) {
-          sfxEvents.push(chunk.event);
-          const chunkMs = await this.typeWithAudioCadence(page, chunk.chunkText, chunk.keystrokes);
-          totalMs += chunkMs;
+          // Each clip's audio starts when its chunk actually starts typing and
+          // stops just after the last keystroke the chunk uses — a clip with
+          // more keystrokes than characters would otherwise clack on after
+          // the text is done.
+          const used = Math.min(chunk.chunkText.length, chunk.keystrokes.length);
+          const lastKeyMs = used > 0 ? chunk.keystrokes[used - 1].timestampMs : 0;
+          sfxEvents.push({
+            ...chunk.event,
+            timeOffset: (clipTimeOffset + (Date.now() - typingStart)) / 1000,
+            durationSeconds: Math.min(chunk.event.durationSeconds, (lastKeyMs + TYPING_TAIL_MS) / 1000),
+          });
+          await this.typeWithAudioCadence(page, chunk.chunkText, chunk.keystrokes);
         }
+        const totalMs = Date.now() - typingStart;
         this.logger.info(
           `Audio-driven typing: ${text.length} chars across ${chunks.length} clip(s) in ${(totalMs / 1000).toFixed(1)}s`
         );
@@ -106,10 +119,10 @@ export class TypingAnimator {
   /**
    * Type characters using the audio clip's keystroke timestamps for cadence.
    *
-   * Maps each character of `text` to a keystroke event from the audio clip,
-   * using the time deltas between consecutive keystrokes as the delay between
-   * typing each character. This creates a 1:1 correspondence between the
-   * visual typing and the audio.
+   * Character i is typed at the time keystroke i was heard in the recording
+   * (measured from when this call starts, which is when the clip's audio
+   * starts playing), creating a 1:1 correspondence between the visual typing
+   * and the audio.
    *
    * @returns Total duration in milliseconds
    */
@@ -119,32 +132,24 @@ export class TypingAnimator {
     audioKeystrokes: KeystrokeEvent[]
   ): Promise<number> {
     const textChars = text.split('');
-    let totalMs = 0;
+    const start = Date.now();
+    // Characters beyond the recorded keystrokes continue at the clip's average pace
+    const avgGapMs = audioKeystrokes.length > 1
+      ? (audioKeystrokes[audioKeystrokes.length - 1].timestampMs - audioKeystrokes[0].timestampMs) /
+        (audioKeystrokes.length - 1)
+      : this.config.baseDelayMs;
 
+    let keyAtMs = 0;
     for (let i = 0; i < textChars.length; i++) {
-      // Compute delay from the audio keystroke timestamps
-      let delayMs: number;
-      if (i < audioKeystrokes.length) {
-        if (i === 0) {
-          // First keystroke: use the timestamp directly as initial delay
-          delayMs = Math.max(audioKeystrokes[0].timestampMs, 20);
-        } else {
-          // Subsequent keystrokes: use delta between consecutive timestamps
-          delayMs = Math.max(
-            audioKeystrokes[i].timestampMs - audioKeystrokes[i - 1].timestampMs,
-            20
-          );
-        }
-      } else {
-        // More text chars than audio keystrokes: use average cadence from clip
-        const avgDelay = audioKeystrokes.length > 1
-          ? audioKeystrokes[audioKeystrokes.length - 1].timestampMs / (audioKeystrokes.length - 1)
-          : this.config.baseDelayMs;
-        delayMs = avgDelay;
-      }
+      keyAtMs = i < audioKeystrokes.length
+        ? Math.max(audioKeystrokes[i].timestampMs, i === 0 ? 20 : keyAtMs + 20)
+        : keyAtMs + avgGapMs;
 
-      await delay(delayMs);
-      totalMs += delayMs;
+      // Wait until the keystroke's time on the clip's clock rather than for the
+      // gap since the previous key: each key press takes a round trip to the
+      // browser, and gaps would let that latency pile up behind the audio.
+      const waitMs = start + keyAtMs - Date.now();
+      if (waitMs > 0) await delay(waitMs);
 
       const char = textChars[i];
       if (char === ' ') {
@@ -154,7 +159,7 @@ export class TypingAnimator {
       }
     }
 
-    return totalMs;
+    return Date.now() - start;
   }
 
   /**

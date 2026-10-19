@@ -233,6 +233,26 @@ describe('TypingAnimator', () => {
       expect(typedKeys).toEqual(['h', 'i', 'y', 'o']);
     });
 
+    it('keeps keystrokes on the clip clock even when key presses are slow', async () => {
+      const animator = new TypingAnimator(makeConfig(), logger);
+      const audioKeystrokes: KeystrokeEvent[] = Array.from({ length: 10 }, (_, i) => ({
+        key: 'a',
+        timestampMs: 50 + i * 60,
+      }));
+      // Each key press costs 25ms (a slow CDP round trip)
+      const mockPage = {
+        keyboard: {
+          type: () => new Promise((r) => setTimeout(r, 25)),
+          press: () => new Promise((r) => setTimeout(r, 25)),
+        },
+      } as any;
+
+      const durationMs = await animator.typeWithAudioCadence(mockPage, 'aaaaaaaaaa', audioKeystrokes);
+
+      // Last key is due at 590ms; per-key latency must not pile up (10 x 25ms = 250ms)
+      expect(durationMs).toBeLessThan(590 + 25 + 60);
+    });
+
     it('total duration matches audio clip duration', async () => {
       const animator = new TypingAnimator(makeConfig(), logger);
 
@@ -262,5 +282,44 @@ describe('TypingAnimator', () => {
       expect(durationMs).toBeGreaterThan(800);
       expect(durationMs).toBeLessThan(2000);
     });
+  });
+});
+
+describe('TypingAnimator.type with SFX clips', () => {
+  it('starts each clip when its chunk starts typing and cuts it after the keys used', async () => {
+    // Two chunks: "ab " on a clip with 6 keystrokes (3 used), then "cd" on a 2-keystroke clip
+    const chunks = [
+      {
+        event: { timeOffset: 1, type: 'typing' as const, audioFile: 'a.wav', durationSeconds: 2.0 },
+        chunkText: 'ab ',
+        keystrokes: [0, 1, 2, 3, 4, 5].map((i) => ({ key: 'x', timestampMs: 40 + i * 50 })),
+      },
+      {
+        event: { timeOffset: 3, type: 'typing' as const, audioFile: 'b.wav', durationSeconds: 1.0 },
+        chunkText: 'cd',
+        keystrokes: [{ key: 'c', timestampMs: 30 }, { key: 'd', timestampMs: 90 }],
+      },
+    ];
+    const sfxManager = { buildTypingTimelineWithKeystrokes: () => chunks } as any;
+    const animator = new TypingAnimator(makeConfig(), logger, sfxManager);
+    const typed: string[] = [];
+    const mockPage = {
+      keyboard: {
+        type: async (k: string) => { typed.push(k); },
+        press: async (k: string) => { typed.push(k === 'Space' ? ' ' : k); },
+      },
+    } as any;
+
+    const result = await animator.type(mockPage, 'ab cd', 1000);
+
+    expect(typed.join('')).toBe('ab cd');
+    const [first, second] = result.sfxEvents;
+    expect(first.timeOffset).toBeCloseTo(1, 1);
+    // Chunk 1 ends at its 3rd keystroke (140ms), so chunk 2 starts ~1.14s — not at 3s
+    expect(second.timeOffset).toBeGreaterThan(1.1);
+    expect(second.timeOffset).toBeLessThan(1.3);
+    // Audio is cut 150ms after the last keystroke used
+    expect(first.durationSeconds).toBeCloseTo(0.29, 2);
+    expect(second.durationSeconds).toBeCloseTo(0.24, 2);
   });
 });

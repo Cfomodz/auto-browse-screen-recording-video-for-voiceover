@@ -372,6 +372,54 @@ describe('ZoomEngine filter chain with real FFmpeg', () => {
     expect(videoStream!.width).toBe(1920);
     expect(videoStream!.height).toBe(1080);
   });
+
+  it('actually magnifies the picture once the camera has moved', async () => {
+    const { ZoomEngine } = await import('../../src/camera/zoom-engine');
+    const { createLogger } = await import('../../src/utils/logger');
+    const zoomLogger = createLogger('ZoomMagnifyTest');
+    zoomLogger.silent = true;
+
+    const engine = new ZoomEngine(
+      { enabled: true, maxZoom: 1.4, transitionMs: 300, easing: 'ease-in-out' as const },
+      zoomLogger
+    );
+    // Centered 1.4x zoom starting at 1s, done by 1.3s
+    const filter = engine.buildFilterChain(
+      [{ timeOffset: 1, region: { x: 0.5, y: 0.5, width: 0.5, height: 0.5 }, label: 'center' }],
+      3, 640, 360, 30
+    );
+    expect(filter).not.toBeNull();
+
+    // Black frame with a 100px white bar centered horizontally
+    const srcPath = path.join(tmpDir, 'zoom_bar_src.mp4');
+    const outPath = path.join(tmpDir, 'zoom_bar_out.mp4');
+    const gen = child_process.spawnSync('ffmpeg', [
+      '-f', 'lavfi',
+      '-i', 'color=c=black:size=640x360:rate=30:duration=3,drawbox=x=270:y=0:w=100:h=360:color=white:t=fill',
+      '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-y', srcPath,
+    ], { encoding: 'utf-8', timeout: 30000 });
+    expect(gen.status).toBe(0);
+
+    const run = child_process.spawnSync('ffmpeg', [
+      '-i', srcPath, '-vf', filter!, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-y', outPath,
+    ], { encoding: 'utf-8', timeout: 60000 });
+    expect(run.status).toBe(0);
+
+    /** Width in pixels of the white bar on the middle row of the frame at time t. */
+    const barWidthAt = (t: number): number => {
+      const frame = child_process.spawnSync('ffmpeg', [
+        '-ss', String(t), '-i', outPath, '-frames:v', '1',
+        '-f', 'rawvideo', '-pix_fmt', 'gray', '-',
+      ], { timeout: 30000, maxBuffer: 10 * 1024 * 1024 });
+      const row = frame.stdout.subarray(180 * 640, 181 * 640);
+      return row.filter((v: number) => v > 128).length;
+    };
+
+    expect(barWidthAt(0.5)).toBeGreaterThanOrEqual(98);
+    expect(barWidthAt(0.5)).toBeLessThanOrEqual(102);
+    expect(barWidthAt(2.5)).toBeGreaterThanOrEqual(136);
+    expect(barWidthAt(2.5)).toBeLessThanOrEqual(144);
+  });
 });
 
 describe('ZoomEngine filter via fluent-ffmpeg outputOptions', () => {

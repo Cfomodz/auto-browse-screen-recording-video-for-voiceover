@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import * as child_process from 'child_process';
 import * as path from 'path';
 import { VideoAssembler } from '../../src/modules/video-assembler';
 import { PipelineConfig, RecordedSegment, ExtractedTopic } from '../../src/core/types';
@@ -127,20 +128,94 @@ describe('VideoAssembler timeline assembly', () => {
     expect(output.peakDb).toBeGreaterThanOrEqual(source.peakDb - 1.5);
   }, 120000);
 
-  it('drops fully-overlapped duplicate windows instead of double-covering', async () => {
+  it('plays every action recorded for one window, one after another', async () => {
     const outDir = path.join(tmpDir, 'out-overlap');
     const assembler = new VideoAssembler(makeConfig(outDir, voiceoverPath), logger);
 
-    // Two actions recorded for the same topic window — only one may occupy it.
-    const segments: RecordedSegment[] = [
-      makeSegment(clipA, 3, 2, 5),
-      makeSegment(clipB, 3, 2, 5),
-    ];
+    // Two actions recorded for the same topic window, visually distinct
+    const red = path.join(tmpDir, 'red.mp4');
+    const blue = path.join(tmpDir, 'blue.mp4');
+    for (const [file, color] of [[red, 'red'], [blue, 'blue']]) {
+      const gen = child_process.spawnSync('ffmpeg', [
+        '-f', 'lavfi', '-i', `color=c=${color}:size=${WIDTH}x${HEIGHT}:rate=30:duration=3`,
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-y', file,
+      ], { encoding: 'utf-8', timeout: 30000 });
+      expect(gen.status).toBe(0);
+    }
 
-    const outputPath = await assembler.assemble(segments);
+    const outputPath = await assembler.assemble([
+      makeSegment(red, 3, 2, 5),
+      makeSegment(blue, 3, 2, 5),
+    ]);
     const probe = ffprobe(outputPath);
     const duration = parseFloat(probe.format.duration);
     expect(duration).toBeGreaterThanOrEqual(VOICEOVER_SEC - 0.5);
     expect(duration).toBeLessThanOrEqual(VOICEOVER_SEC + 0.5);
+
+    /** Average RGB of the frame at time t. */
+    const colorAt = (t: number): number[] => {
+      const frame = child_process.spawnSync('ffmpeg', [
+        '-ss', String(t), '-i', outputPath, '-frames:v', '1',
+        '-vf', 'scale=1:1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-',
+      ], { timeout: 30000 });
+      return [...frame.stdout.subarray(0, 3)];
+    };
+
+    // Both play in full; the spare 9s is split as holds: red 0–7.5s, blue 7.5–15s
+    const [r1, , b1] = colorAt(1);
+    expect(r1).toBeGreaterThan(150);
+    expect(b1).toBeLessThan(100);
+    const [r2, , b2] = colorAt(9);
+    expect(b2).toBeGreaterThan(150);
+    expect(r2).toBeLessThan(100);
   }, 120000);
+});
+
+describe('VideoAssembler SFX levels', () => {
+  let tmpDir: string;
+  let cleanup: () => void;
+
+  beforeAll(() => {
+    const tmp = makeTempDir('sfx-level-test-');
+    tmpDir = tmp.dir;
+    cleanup = tmp.cleanup;
+  });
+
+  afterAll(() => cleanup());
+
+  it('brings a quiet mono 192 kHz sample (like the typing library) up to the target level', async () => {
+    // The bundled typing clips peak around -40 dBFS and are mono 192 kHz;
+    // a plain volume multiplier left them inaudible.
+    const tone = path.join(tmpDir, 'quiet_tone.wav');
+    const quiet = path.join(tmpDir, 'quiet.wav');
+    generateTestTone(tone, { durationSec: 0.5, frequency: 2000, sampleRate: 192000, channels: 1 });
+    // lavfi's sine peaks at -18 dBFS; take it down to -40 dBFS
+    const gen = child_process.spawnSync('ffmpeg', [
+      '-i', tone, '-af', 'volume=-22dB', '-c:a', 'pcm_s16le', '-y', quiet,
+    ], { encoding: 'utf-8', timeout: 15000 });
+    expect(gen.status).toBe(0);
+
+    const clip = path.join(tmpDir, 'clip.mp4');
+    generateTestVideo(clip, { durationSec: 2, width: WIDTH, height: HEIGHT });
+
+    const config: PipelineConfig = {
+      ...makeConfig(tmpDir, quiet),
+      sfx: {
+        enabled: true,
+        libraryPath: tmpDir,
+        volume: 0.8,
+        mouseClick: { enabled: false, samplesDir: 'clicks' },
+        keyboardTyping: { enabled: true, samplesDir: 'typing' },
+      },
+    };
+    const assembler = new VideoAssembler(config, logger);
+    await assembler.bakeSfxIntoClip(clip, [
+      { timeOffset: 0.5, type: 'typing', audioFile: quiet, durationSeconds: 0.5 },
+    ]);
+
+    // volume 0.8 → -12 dBFS + 20*log10(0.8) ≈ -14 dBFS
+    const level = audioHasContent(clip);
+    expect(level.peakDb).toBeGreaterThan(-15.5);
+    expect(level.peakDb).toBeLessThan(-12.5);
+  }, 60000);
 });

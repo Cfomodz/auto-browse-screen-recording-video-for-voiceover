@@ -1,19 +1,44 @@
 import { CameraConfig, ZoomKeyframe } from '../core/types';
 import { Logger } from '../utils/logger';
 
+/** A crop window in source pixels. Always has the source's aspect ratio. */
+export interface CameraRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/** One eased camera move between two crop windows. */
+export interface CameraMove {
+  /** First frame of the move (0-based). */
+  startFrame: number;
+  /** Length of the move in frames (>= 1). */
+  frames: number;
+  from: CameraRect;
+  to: CameraRect;
+  label: string;
+}
+
 /**
  * Dynamic camera/zoom engine.
  *
- * Converts ZoomKeyframe arrays into FFmpeg filter expressions that
- * apply smooth zoom-and-pan effects to recorded screen clips.
+ * Converts ZoomKeyframe arrays into an FFmpeg filter that applies smooth
+ * zoom-and-pan effects to recorded screen clips.
  *
  * Simulates the "eye-tracking" effect of a video editor following
  * the user's gaze — zooming to the search bar while typing, pulling
  * out to see results, zooming to the element about to be clicked, etc.
  *
- * The zoom is achieved by cropping a sub-region of the full-resolution
- * source frame and scaling it back up, with smooth interpolation between
- * keyframes using the configured easing function.
+ * Camera model: each keyframe starts a move toward its region at its
+ * timeOffset. The move lasts `transitionMs` (shortened if the next keyframe
+ * arrives sooner) with the configured easing, then the camera holds still
+ * until the next keyframe.
+ *
+ * The filter is `perspective` with per-frame evaluation: it maps the crop
+ * window's corners onto the output corners with sub-pixel accuracy, so zooms
+ * and pans are smooth. (`crop` cannot be used here — FFmpeg evaluates its
+ * width/height only once, so an animated crop never actually zooms.)
  */
 export class ZoomEngine {
   private config: CameraConfig;
@@ -29,18 +54,14 @@ export class ZoomEngine {
   }
 
   /**
-   * Generate an FFmpeg zoompan filter string for a clip.
+   * Generate the FFmpeg zoom filter for a clip.
    *
-   * The approach: use the `crop` + `scale` filters with expression-based
-   * animation. We interpolate between keyframes to smoothly move the
-   * crop window across the frame.
-   *
-   * @param keyframes     Zoom keyframes for this clip
+   * @param keyframes     Zoom keyframes for this clip (times in clip seconds)
    * @param clipDuration  Duration of the clip in seconds
    * @param sourceWidth   Source video width in pixels
    * @param sourceHeight  Source video height in pixels
    * @param fps           Frame rate
-   * @returns FFmpeg complex filter string, or null if no zoom needed
+   * @returns FFmpeg filter string, or null if the camera never leaves full frame
    */
   buildFilterChain(
     keyframes: ZoomKeyframe[],
@@ -53,133 +74,171 @@ export class ZoomEngine {
       return null;
     }
 
-    // Always start with a full-frame keyframe if none exists at t=0
-    const sorted = [...keyframes].sort((a, b) => a.timeOffset - b.timeOffset);
-    if (sorted[0].timeOffset > 0) {
-      sorted.unshift({
-        timeOffset: 0,
-        region: { x: 0.5, y: 0.5, width: 1.0, height: 1.0 },
-        label: 'initial-full-frame',
-      });
+    const moves = this.planCameraMoves(keyframes, clipDuration, sourceWidth, sourceHeight, fps);
+    if (moves.length === 0) {
+      return null;
     }
-
-    // Add a return-to-full-frame at end if the last keyframe isn't there
-    const lastKf = sorted[sorted.length - 1];
-    if (lastKf.timeOffset < clipDuration - 0.5) {
-      sorted.push({
-        timeOffset: clipDuration,
-        region: { x: 0.5, y: 0.5, width: 1.0, height: 1.0 },
-        label: 'final-full-frame',
-      });
-    }
-
-    // Convert keyframes to absolute pixel values and frame numbers
-    const pixelKeyframes = sorted.map((kf) => {
-      const cropW = Math.round(sourceWidth * Math.max(kf.region.width, 1 / this.config.maxZoom));
-      const cropH = Math.round(sourceHeight * Math.max(kf.region.height, 1 / this.config.maxZoom));
-      const cropX = Math.round(kf.region.x * sourceWidth - cropW / 2);
-      const cropY = Math.round(kf.region.y * sourceHeight - cropH / 2);
-      const frame = Math.round(kf.timeOffset * fps);
-
-      return {
-        frame,
-        cropX: Math.max(0, Math.min(cropX, sourceWidth - cropW)),
-        cropY: Math.max(0, Math.min(cropY, sourceHeight - cropH)),
-        cropW: Math.min(cropW, sourceWidth),
-        cropH: Math.min(cropH, sourceHeight),
-        label: kf.label,
-      };
-    });
 
     this.logger.info(
-      `Building zoom filter: ${pixelKeyframes.length} keyframes over ${clipDuration.toFixed(1)}s`
+      `Building zoom filter: ${moves.length} camera moves over ${clipDuration.toFixed(1)}s`
     );
-    for (const kf of pixelKeyframes) {
+    for (const m of moves) {
       this.logger.info(
-        `  [frame ${kf.frame}] ${kf.label}: crop=${kf.cropW}x${kf.cropH}+${kf.cropX}+${kf.cropY}`
+        `  [frame ${m.startFrame}+${m.frames}] ${m.label}: ` +
+          `${Math.round(m.to.w)}x${Math.round(m.to.h)}+${Math.round(m.to.x)}+${Math.round(m.to.y)}`
       );
     }
 
-    // Build the FFmpeg expression that interpolates between keyframes.
-    // We use the crop filter with expressions that reference frame number (n).
-    const cropXExpr = this.buildInterpolationExpr(pixelKeyframes, 'cropX');
-    const cropYExpr = this.buildInterpolationExpr(pixelKeyframes, 'cropY');
-    const cropWExpr = this.buildInterpolationExpr(pixelKeyframes, 'cropW');
-    const cropHExpr = this.buildInterpolationExpr(pixelKeyframes, 'cropH');
+    const full: CameraRect = { x: 0, y: 0, w: sourceWidth, h: sourceHeight };
+    const left = this.buildEdgeExpr(full, moves, (r) => r.x);
+    const top = this.buildEdgeExpr(full, moves, (r) => r.y);
+    const right = this.buildEdgeExpr(full, moves, (r) => r.x + r.w);
+    const bottom = this.buildEdgeExpr(full, moves, (r) => r.y + r.h);
 
-    // The filter chain:
-    // 1. Crop the animated region from the source
-    // 2. Scale the crop back up to the output resolution
-    const filter = [
-      `crop='${cropWExpr}:${cropHExpr}:${cropXExpr}:${cropYExpr}'`,
-      `scale=${sourceWidth}:${sourceHeight}:flags=lanczos`,
-    ].join(',');
-
-    return filter;
+    // sense=source: the four given source points are sent to the output
+    // corners (top-left, top-right, bottom-left, bottom-right).
+    return (
+      `perspective=` +
+      `x0='${left}':y0='${top}':x1='${right}':y1='${top}':` +
+      `x2='${left}':y2='${bottom}':x3='${right}':y3='${bottom}':` +
+      `interpolation=cubic:sense=source:eval=frame`
+    );
   }
 
   /**
-   * Build an FFmpeg expression string that interpolates a property
-   * between keyframes using the frame number (n).
-   *
-   * Produces a chain of if(lt(n,frame), lerp, if(lt(n,frame), lerp, ...))
-   * expressions that FFmpeg evaluates per-frame.
+   * Resolve a normalized keyframe region into a crop window that keeps the
+   * source aspect ratio (no squashing), never zooms past maxZoom, and stays
+   * inside the frame.
    */
-  private buildInterpolationExpr(
-    keyframes: Array<{ frame: number; cropX: number; cropY: number; cropW: number; cropH: number }>,
-    prop: 'cropX' | 'cropY' | 'cropW' | 'cropH'
+  regionToRect(
+    region: ZoomKeyframe['region'],
+    sourceWidth: number,
+    sourceHeight: number
+  ): CameraRect {
+    const zoom = Math.max(
+      1,
+      Math.min(
+        this.config.maxZoom,
+        1 / Math.max(region.width, 1e-6),
+        1 / Math.max(region.height, 1e-6)
+      )
+    );
+    const w = sourceWidth / zoom;
+    const h = sourceHeight / zoom;
+    return {
+      x: clamp(region.x * sourceWidth - w / 2, 0, sourceWidth - w),
+      y: clamp(region.y * sourceHeight - h / 2, 0, sourceHeight - h),
+      w,
+      h,
+    };
+  }
+
+  /**
+   * Turn keyframes into camera moves. The camera starts at full frame; each
+   * keyframe starts a move from wherever the camera is to the keyframe's
+   * region. Keyframes landing on the same frame collapse to the last one, and
+   * moves are shortened so they never overlap the next one.
+   */
+  planCameraMoves(
+    keyframes: ZoomKeyframe[],
+    clipDuration: number,
+    sourceWidth: number,
+    sourceHeight: number,
+    fps: number
+  ): CameraMove[] {
+    const lastFrame = Math.max(0, Math.round(clipDuration * fps));
+    const transitionFrames = Math.max(1, Math.round((this.config.transitionMs / 1000) * fps));
+
+    const timed = [...keyframes]
+      .map((kf) => ({ kf, frame: Math.max(0, Math.round(kf.timeOffset * fps)) }))
+      .filter(({ frame }) => frame < lastFrame)
+      .sort((a, b) => a.frame - b.frame);
+
+    const moves: CameraMove[] = [];
+    let current: CameraRect = { x: 0, y: 0, w: sourceWidth, h: sourceHeight };
+
+    for (let i = 0; i < timed.length; i++) {
+      const { kf, frame } = timed[i];
+      const nextFrame = i + 1 < timed.length ? timed[i + 1].frame : lastFrame;
+      if (nextFrame <= frame) continue; // superseded by a keyframe on the same frame
+
+      const target = this.regionToRect(kf.region, sourceWidth, sourceHeight);
+      if (rectsEqual(current, target)) continue;
+
+      moves.push({
+        startFrame: frame,
+        frames: Math.min(transitionFrames, nextFrame - frame),
+        from: current,
+        to: target,
+        label: kf.label,
+      });
+      current = target;
+    }
+
+    return moves;
+  }
+
+  /**
+   * Build an FFmpeg expression for one edge of the crop window.
+   *
+   * Moves never overlap, so the edge at any frame is its starting value plus
+   * each move's delta scaled by that move's eased progress (0 before the move,
+   * 1 after it). A sum keeps the expression short — nested if() chains grow
+   * long enough to hit the Windows command-line limit.
+   */
+  private buildEdgeExpr(
+    start: CameraRect,
+    moves: CameraMove[],
+    edge: (r: CameraRect) => number
   ): string {
-    if (keyframes.length === 1) {
-      return String(keyframes[0][prop]);
+    let expr = formatNumber(edge(start));
+    for (const m of moves) {
+      const delta = edge(m.to) - edge(m.from);
+      if (Math.abs(delta) < 0.005) continue;
+      expr += `${delta >= 0 ? '+' : ''}${formatNumber(delta)}*${this.buildEasingExpr(m.startFrame, m.frames)}`;
     }
-
-    // Build nested if/else for each segment between keyframes
-    let expr = String(keyframes[keyframes.length - 1][prop]);
-
-    for (let i = keyframes.length - 2; i >= 0; i--) {
-      const from = keyframes[i];
-      const to = keyframes[i + 1];
-      const fromVal = from[prop];
-      const toVal = to[prop];
-      const startFrame = from.frame;
-      const endFrame = to.frame;
-      const frameDiff = Math.max(1, endFrame - startFrame);
-
-      // Linear interpolation with easing applied
-      const easingExpr = this.buildEasingExpr(startFrame, frameDiff);
-
-      const lerpExpr =
-        `${fromVal}+(${toVal}-${fromVal})*${easingExpr}`;
-
-      expr = `if(lt(n\\,${endFrame})\\,${lerpExpr}\\,${expr})`;
-    }
-
     return expr;
   }
 
   /**
-   * Build an easing expression based on normalized progress t = (n - startFrame) / frameDiff.
-   * Returns an FFmpeg expression string that evaluates to [0, 1].
+   * Eased progress of a move in [0, 1] as an FFmpeg expression.
+   * The perspective filter's `in` counter is 1-based, so frame n is in = n + 1.
    */
-  private buildEasingExpr(startFrame: number, frameDiff: number): string {
-    // t = (n - startFrame) / frameDiff, clamped to [0, 1]
-    const tExpr = `min(1\\,max(0\\,(n-${startFrame})/${frameDiff}))`;
+  private buildEasingExpr(startFrame: number, frames: number): string {
+    const t = `clip((in-${startFrame + 1})/${frames}\\,0\\,1)`;
 
     switch (this.config.easing) {
       case 'ease-in':
         // t^2
-        return `pow(${tExpr}\\,2)`;
+        return `pow(${t}\\,2)`;
       case 'ease-out':
-        // 1 - (1-t)^2
-        return `(1-pow(1-${tExpr}\\,2))`;
+        // 1 - (1-t)^2 = t(2-t)
+        return `st(0\\,${t})*(2-ld(0))`;
       case 'ease-in-out':
-        // Smoothstep: 3t^2 - 2t^3
-        return `(3*pow(${tExpr}\\,2)-2*pow(${tExpr}\\,3))`;
+        // Smoothstep: 3t^2 - 2t^3 = t*t*(3-2t)
+        return `st(0\\,${t})*ld(0)*(3-2*ld(0))`;
       case 'linear':
       default:
-        return tExpr;
+        return t;
     }
   }
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function rectsEqual(a: CameraRect, b: CameraRect): boolean {
+  return (
+    Math.abs(a.x - b.x) < 0.5 &&
+    Math.abs(a.y - b.y) < 0.5 &&
+    Math.abs(a.w - b.w) < 0.5 &&
+    Math.abs(a.h - b.h) < 0.5
+  );
+}
+
+function formatNumber(n: number): string {
+  return String(Math.round(n * 100) / 100);
 }
 
 /**
@@ -245,6 +304,28 @@ export const ZoomPresets = {
     return {
       timeOffset,
       region: { x: normX, y: normY, width: 0.5, height: 0.4 },
+      label,
+    };
+  },
+
+  /**
+   * Zoom to an element's bounding box (pixels), keeping some context around
+   * it. The zoom itself is capped by maxZoom when the camera resolves it.
+   */
+  boxFocus(
+    timeOffset: number,
+    box: { x: number; y: number; width: number; height: number },
+    viewport: { width: number; height: number },
+    label: string
+  ): ZoomKeyframe {
+    return {
+      timeOffset,
+      region: {
+        x: Math.min(1, Math.max(0, (box.x + box.width / 2) / viewport.width)),
+        y: Math.min(1, Math.max(0, (box.y + box.height / 2) / viewport.height)),
+        width: Math.min(1, Math.max(0.05, (box.width * 1.5) / viewport.width)),
+        height: Math.min(1, Math.max(0.05, (box.height * 3) / viewport.height)),
+      },
       label,
     };
   },

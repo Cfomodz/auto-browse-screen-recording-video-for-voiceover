@@ -35,8 +35,8 @@ export class WebSearchModule extends BrollModule {
     this.logger.info(`Web search: "${topic.topic}"`);
     browser.startClipSfxTracking();
 
-    // Zoom to search bar as we navigate
-    zoomKeyframes.push(ZoomPresets.searchBarFocus(elapsed()));
+    // Zoom to the search box
+    zoomKeyframes.push(await browser.searchBoxFocus(elapsed()));
 
     // Perform the search (typing happens here)
     await browser.performSearch(topic.topic);
@@ -64,7 +64,12 @@ export class WebSearchModule extends BrollModule {
         const vw = page.viewport()?.width ?? 1920;
         const vh = page.viewport()?.height ?? 1080;
         zoomKeyframes.push(
-          ZoomPresets.elementFocus(elapsed(), box.x / vw, box.y / vh, 'hover-result')
+          ZoomPresets.elementFocus(
+            elapsed(),
+            (box.x + box.width / 2) / vw,
+            (box.y + box.height / 2) / vh,
+            'hover-result'
+          )
         );
 
         await browser.mouse.moveTo(

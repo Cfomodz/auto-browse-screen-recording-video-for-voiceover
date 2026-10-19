@@ -47,7 +47,7 @@ export class DefinitionSearchModule extends BrollModule {
     browser.startClipSfxTracking();
 
     // Zoom to search bar
-    zoomKeyframes.push(ZoomPresets.searchBarFocus(elapsed()));
+    zoomKeyframes.push(await browser.searchBoxFocus(elapsed()));
 
     await browser.performSearch(query);
 
@@ -140,13 +140,11 @@ export class DefinitionSearchModule extends BrollModule {
       if (isDictionary) {
         const box = await link.boundingBox();
         if (box && box.y > 0 && box.y < 800) {
-          await browser.clickAt(
-            box.x + box.width / 2,
-            box.y + box.height / 2,
-            'left',
-            { durationMs: 800 }
+          await browser.withNavigation(
+            () => browser.clickAt(box.x + box.width / 2, box.y + box.height / 2, 'left', { durationMs: 800 }),
+            10000,
+            'domcontentloaded'
           );
-          await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {});
           return true;
         }
       }

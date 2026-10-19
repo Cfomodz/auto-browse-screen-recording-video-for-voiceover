@@ -1,4 +1,4 @@
-import puppeteer, { Browser, Page } from 'puppeteer-core';
+import puppeteer, { BoundingBox, Browser, Page } from 'puppeteer-core';
 import { PipelineConfig, SfxEvent, ZoomKeyframe, ClickButtonType, CursorEvent } from '../core/types';
 import { MouseAnimator } from './mouse';
 import { TypingAnimator } from './typing-animator';
@@ -6,6 +6,26 @@ import { CursorRenderer, resolveCursorConfig } from './cursor-renderer';
 import { SfxManager } from '../sfx/manager';
 import { Logger } from '../utils/logger';
 import { humanDelay } from '../utils/timing';
+import { ZoomPresets } from '../camera/zoom-engine';
+
+/** Thrown when a search engine shows a bot check instead of the page we need. */
+export class BotChallengeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'BotChallengeError';
+  }
+}
+
+type PageElement = NonNullable<Awaited<ReturnType<Page['$']>>>;
+
+/** Search input selectors, tried in order; the first visible match wins. */
+const SEARCH_INPUT_SELECTORS = [
+  'input[name="q"]',            // Bing, DuckDuckGo
+  'textarea[name="q"]',         // Google
+  'input[name="query"]',        // Some engines
+  'input[type="search"]',       // Generic
+  '#search-input',              // Brave
+];
 
 /**
  * Browser engine wrapping Puppeteer with realistic interaction helpers.
@@ -27,6 +47,8 @@ export class BrowserEngine {
   private _clipSfxEvents: SfxEvent[] = [];
   /** Time tracking for SFX offset calculations. */
   private _clipStartTime: number = 0;
+  /** True while the page is the freshly loaded search home from prepareForClip(). */
+  private _atSearchHome = false;
 
   constructor(config: PipelineConfig, logger: Logger, sfxManager?: SfxManager) {
     this.config = config;
@@ -50,6 +72,19 @@ export class BrowserEngine {
 
   get cursorRenderer(): CursorRenderer | null {
     return this._cursorRenderer;
+  }
+
+  get isLaunched(): boolean {
+    return this.browser !== null;
+  }
+
+  /** Absolute Date.now() when the current clip's module started (startClipSfxTracking). */
+  get clipStartTime(): number {
+    return this._clipStartTime;
+  }
+
+  get viewport(): { width: number; height: number } {
+    return this.config.viewport;
   }
 
   /** Start tracking SFX and cursor events for a new recording clip. */
@@ -86,6 +121,8 @@ export class BrowserEngine {
       executablePath,
       headless: false,  // Must be visible for screen recording
       defaultViewport: null,
+      // A page frozen by a bot check would otherwise stall every call for 3 minutes
+      protocolTimeout: 60000,
       args: [
         ...(process.env.BROLL_NO_SANDBOX ? ['--no-sandbox', '--disable-setuid-sandbox'] : []),
         ...(process.env.BROLL_PROXY ? [`--proxy-server=${process.env.BROLL_PROXY}`, '--ignore-certificate-errors'] : []),
@@ -99,6 +136,7 @@ export class BrowserEngine {
     const pages = await this.browser.pages();
     this._page = pages[0] || await this.browser.newPage();
 
+    await this.fitWindowToViewport(this._page);
     await this._page.setViewport({
       width: this.config.viewport.width,
       height: this.config.viewport.height,
@@ -107,6 +145,10 @@ export class BrowserEngine {
     // Reduce automation fingerprinting
     await this._page.evaluateOnNewDocument(() => {
       Object.defineProperty(navigator, 'webdriver', { get: () => false });
+    });
+
+    this._page.on('framenavigated', (frame) => {
+      if (frame === this._page?.mainFrame()) this._atSearchHome = false;
     });
 
     // Create cursor renderer for synthetic cursor overlay
@@ -138,6 +180,74 @@ export class BrowserEngine {
     }
 
     this.logger.info('Browser launched.');
+  }
+
+  /**
+   * Get ready for a new clip before recording starts: open the search
+   * engine's home page and park the cursor where a hand would rest. Without
+   * this, clips open on a blank page or the previous clip's last page, with
+   * the cursor stuck in the top-left corner.
+   */
+  async prepareForClip(): Promise<void> {
+    await this.navigate(this.getSearchUrl(''));
+    await this.dismissConsentDialog();
+    await this.throwIfBotChallenge('opening the search page');
+
+    const { width, height } = this.config.viewport;
+    await this.mouse.jumpTo(
+      Math.round(width * (0.45 + Math.random() * 0.1)),
+      Math.round(height * (0.6 + Math.random() * 0.1))
+    );
+    this._atSearchHome = true;
+  }
+
+  /**
+   * Size the browser window so its page area is the configured viewport.
+   *
+   * The screencast only captures what the window shows. A window of exactly
+   * viewport size loses ~140px to the tab strip and address bar, and the
+   * bottom of every page is missing from the recording. Grow the window by
+   * that overhead; if the OS won't allow a window that big (it may cap it at
+   * the screen size), go fullscreen, which has no browser UI at all.
+   */
+  private async fitWindowToViewport(page: Page): Promise<void> {
+    const { width, height } = this.config.viewport;
+    const measure = () =>
+      page.evaluate(() => {
+        const w = globalThis as any;
+        return { inner: [w.innerWidth, w.innerHeight], outer: [w.outerWidth, w.outerHeight] };
+      });
+    const fits = (inner: number[]) => inner[0] >= width && inner[1] >= height;
+
+    try {
+      const session = await page.createCDPSession();
+      const { windowId } = await session.send('Browser.getWindowForTarget');
+      let { inner, outer } = await measure();
+
+      if (!fits(inner)) {
+        await session.send('Browser.setWindowBounds', {
+          windowId,
+          bounds: { width: width + (outer[0] - inner[0]), height: height + (outer[1] - inner[1]) },
+        });
+        await new Promise((r) => setTimeout(r, 300));
+        ({ inner } = await measure());
+      }
+      if (!fits(inner)) {
+        await session.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'fullscreen' } });
+        await new Promise((r) => setTimeout(r, 500));
+        ({ inner } = await measure());
+      }
+      await session.detach();
+
+      if (!fits(inner)) {
+        this.logger.warn(
+          `The browser can only show ${inner[0]}x${inner[1]} of the ${width}x${height} viewport on this ` +
+            `screen, so recordings will be scaled down to fit. Use a smaller "viewport" or a larger display.`
+        );
+      }
+    } catch (err) {
+      this.logger.warn(`Could not size the browser window: ${(err as Error).message}`);
+    }
   }
 
   /** Navigate to a URL and wait for load. */
@@ -173,92 +283,171 @@ export class BrowserEngine {
     }
   }
 
-  /** Get the search URL for the configured search engine. */
+  /** Get the search URL for the configured search engine (its home page when query is empty). */
   getSearchUrl(query: string): string {
     const encoded = encodeURIComponent(query);
-    if (process.env.BROLL_SEARCH_URL_OVERRIDE) {
-      return `${process.env.BROLL_SEARCH_URL_OVERRIDE}?q=${encoded}`;
+    const override = process.env.BROLL_SEARCH_URL_OVERRIDE;
+    if (override) {
+      return query ? `${override}?q=${encoded}` : override;
     }
     switch (this.config.searchEngine) {
       case 'brave':
-        return `https://search.brave.com/search?q=${encoded}`;
+        return query ? `https://search.brave.com/search?q=${encoded}` : 'https://search.brave.com/';
       case 'duckduckgo':
-        return `https://duckduckgo.com/?q=${encoded}`;
+        return query ? `https://duckduckgo.com/?q=${encoded}` : 'https://duckduckgo.com/';
       case 'google':
       default:
-        return `https://www.google.com/search?q=${encoded}`;
+        return query ? `https://www.google.com/search?q=${encoded}` : 'https://www.google.com/';
     }
   }
 
-  /** Perform a search by navigating to the search engine, clicking the search box, and typing. */
-  async performSearch(query: string): Promise<void> {
-    const searchUrl = this.getSearchUrl('');
-    await this.navigate(searchUrl);
+  /** Bounding box of the visible search input on the current page, if any. */
+  async locateSearchBox(): Promise<BoundingBox | null> {
+    return (await this.findSearchInput())?.box ?? null;
+  }
 
-    // Find and click search input
-    const searchSelectors = [
-      'input[name="q"]',            // Google & DuckDuckGo
-      'textarea[name="q"]',         // Google (sometimes uses textarea)
-      'input[name="query"]',        // Some engines
-      'input[type="search"]',       // Generic
-      '#search-input',              // Brave
-    ];
+  /** Zoom keyframe framing the search box (falls back to the top-center preset). */
+  async searchBoxFocus(timeOffset: number): Promise<ZoomKeyframe> {
+    const box = await this.locateSearchBox().catch(() => null);
+    return box
+      ? ZoomPresets.boxFocus(timeOffset, box, this.config.viewport, 'search-box-focus')
+      : ZoomPresets.searchBarFocus(timeOffset);
+  }
 
-    let clicked = false;
-    for (const selector of searchSelectors) {
+  private async findSearchInput(): Promise<{ handle: PageElement; box: BoundingBox } | null> {
+    for (const selector of SEARCH_INPUT_SELECTORS) {
       try {
-        const el = await this.page.$(selector);
-        if (el) {
-          const box = await el.boundingBox();
-          if (box) {
-            await this.mouse.moveAndClick(
-              box.x + box.width / 2,
-              box.y + box.height / 2
-            );
-            clicked = true;
-            break;
-          }
+        for (const handle of await this.page.$$(selector)) {
+          const box = await handle.boundingBox();
+          if (box && box.width > 0 && box.height > 0) return { handle, box };
         }
       } catch {
         // Try next selector
       }
     }
+    return null;
+  }
 
-    if (!clicked) {
-      // Fallback: click center-top of page
+  /**
+   * Look for a search engine bot check: a CAPTCHA / "unusual traffic" page,
+   * a blank page, or a renderer frozen by a challenge script. Returns a
+   * description of what was found, or null if the page looks normal.
+   */
+  async detectBotChallenge(): Promise<string | null> {
+    const probe = this.page
+      .evaluate(() => {
+        const doc = (globalThis as any).document;
+        return { url: String(doc.location.href), text: String(doc.body?.innerText ?? '') };
+      })
+      .catch(() => null);
+    const timedOut = new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 8000));
+    const info = await Promise.race([probe, timedOut]);
+
+    if (info === 'timeout') return 'the page froze (bot-check scripts do this)';
+    if (!info) return null; // mid-navigation — nothing to judge yet
+    if (/\/sorry\//.test(info.url)) return 'it showed its "unusual traffic" page';
+
+    const text = info.text.trim();
+    if (text.length === 0) return 'it showed a blank page';
+    if (
+      text.length < 1500 &&
+      /unusual traffic|one last step|verify you are human|are you a robot|not a robot/i.test(text)
+    ) {
+      return 'it asked to verify you are human';
+    }
+    return null;
+  }
+
+  private async throwIfBotChallenge(during: string): Promise<void> {
+    const challenge = await this.detectBotChallenge();
+    if (!challenge) return;
+    const url = new URL(this.page.url());
+    throw new BotChallengeError(
+      `Bot check from ${url.origin}${url.pathname} while ${during}: ${challenge}. ` +
+        `Stopping rather than recording it. Clips recorded so far are kept and reused on the ` +
+        `next run. Try again later, or switch "searchEngine" in the config.`
+    );
+  }
+
+  /** Dismiss a cookie-consent interstitial (e.g. Google's in the EU) if one is showing. */
+  private async dismissConsentDialog(): Promise<void> {
+    const dismissed = await this.page
+      .evaluate(() => {
+        const labels = /^(reject all|accept all|i agree|alle ablehnen|tout refuser)$/i;
+        const doc = (globalThis as any).document;
+        const button = [...doc.querySelectorAll('button, [role="button"]')].find((el: any) =>
+          labels.test(String(el.textContent ?? '').trim())
+        );
+        button?.click();
+        return Boolean(button);
+      })
+      .catch(() => false);
+    if (dismissed) {
+      this.logger.info('Dismissed a cookie-consent dialog.');
+      await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {});
+    }
+  }
+
+  /** Perform a search: open the search engine (unless already there), click the search box, and type. */
+  async performSearch(query: string): Promise<void> {
+    if (!this._atSearchHome) {
+      await this.navigate(this.getSearchUrl(''));
+    }
+
+    const input = await this.findSearchInput();
+    if (input) {
       await this.mouse.moveAndClick(
-        this.config.viewport.width / 2,
-        200
+        input.box.x + input.box.width / 2,
+        input.box.y + input.box.height / 2
       );
+    } else {
+      // Fallback: click center-top of page
+      this.logger.warn('Search input not found; clicking where it usually is.');
+      await this.mouse.moveAndClick(this.config.viewport.width / 2, 200);
     }
 
     await humanDelay(300, 600);
 
     // Explicitly focus the search input before typing — keyboard.type() sends to
     // the focused element; a click alone may not establish focus on Google, etc.
-    let focused = false;
-    for (const selector of searchSelectors) {
-      try {
-        await this.page.focus(selector);
-        focused = true;
-        break;
-      } catch {
-        // Try next selector
-      }
-    }
-    if (!focused) {
-      this.logger.warn('Could not focus search input; typing may not appear.');
+    if (input) {
+      await input.handle.focus().catch(() => {
+        this.logger.warn('Could not focus search input; typing may not appear.');
+      });
     }
 
     await this.humanType(query);
     await humanDelay(200, 400);
-    await this.page.keyboard.press('Enter');
-    await this.page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 }).catch(() => {});
+    await this.withNavigation(() => this.page.keyboard.press('Enter'));
+    await this.throwIfBotChallenge(`searching for "${query}"`);
     // The results page recreated the cursor overlay — restore its position
     if (this._cursorRenderer) {
       await this._cursorRenderer.ensureOnPage(this.page).catch(() => {});
     }
     await humanDelay(1000, 2000);
+  }
+
+  /**
+   * Run an action that may navigate (a click, Enter in a form) and wait for
+   * the navigation it causes. The wait is registered before the action runs:
+   * registered after, a fast page can finish loading first, and the wait
+   * then sits out its whole timeout on a frozen page. If the action returns
+   * false (nothing was clicked), no navigation is awaited.
+   *
+   * Use waitUntil 'domcontentloaded' for links to other sites: their trackers
+   * keep connections open, so 'networkidle2' tends to wait out the timeout.
+   */
+  async withNavigation<T>(
+    action: () => Promise<T>,
+    timeoutMs: number = 15000,
+    waitUntil: 'domcontentloaded' | 'networkidle2' = 'networkidle2'
+  ): Promise<T> {
+    const navigation = this.page
+      .waitForNavigation({ waitUntil, timeout: timeoutMs })
+      .catch(() => null);
+    const result = await action();
+    if (result !== false) await navigation;
+    return result;
   }
 
   /**
