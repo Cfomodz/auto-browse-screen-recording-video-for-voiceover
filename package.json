@@ -14,6 +14,7 @@
     "test:unit": "npx vitest run tests/unit",
     "test:integration": "npx vitest run tests/integration",
     "test:watch": "npx vitest",
+    "e2e": "ts-node scripts/e2e/run-e2e.ts",
     "debug-audio": "ts-node scripts/debug-audio-devices.ts",
     "debug-typing-audio": "ts-node scripts/debug-typing-recorder-audio.ts"
   },

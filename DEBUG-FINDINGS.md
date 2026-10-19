@@ -164,3 +164,84 @@ Needed to reproduce inside a sandboxed/headless environment; harmless in normal 
 4. Cursor `ensureOnPage` after Enter navigation
 5. Recorder last-frame extension (SFX sync at clip tails)
 6. Minor items
+
+---
+
+# Round 2 — end-to-end in a real browser
+
+The fixes above were verified against a single mock page. Round 2 ran the real
+pipeline in headed Chromium (under Xvfb) against a Google-like stand-in with
+home, results, news, images and definition pages (`scripts/e2e/`), with the
+car-wash config and voiceover, and inspected the output frames and audio.
+Several problems only show up that way.
+
+## Findings and fixes
+
+1. **The first clip aborted the run: SFX inaudible (critical).** The bundled
+   typing samples peak at -36 to -58 dBFS. `sfx.volume: 10.0` had been
+   compensating; round 1 lowered it to 0.8, so every baked clip peaked around
+   -48 dB and failed the pipeline's own "audio too quiet" check.
+   *Fix:* the assembler peak-normalizes each sample to -12 dBFS before
+   applying `sfx.volume` (capped at -1 dBFS), so the setting means what its
+   doc says regardless of how a sample was recorded.
+
+2. **Camera zoom never moved (critical).** FFmpeg's `crop` evaluates its
+   width/height once at setup, so the animated crop rendered every frame at
+   full frame (verified: a 100px bar measured 100px at "1.4x"). The interval
+   model also drifted across whole keyframe gaps, ignored `transitionMs`, and
+   could squash non-16:9 regions.
+   *Fix:* per-frame `perspective` filter (sub-pixel smooth); each keyframe
+   starts a `transitionMs` move, then holds; aspect-preserving crop windows;
+   the search box is framed from its real bounding box.
+
+3. **Recordings cut off at 940px, mixed resolutions (high).** A 1920x1080
+   headed window shows only 1920x940 of page, and the screencast captures only
+   what is shown, so the bottom 140px never made it into clips; clips came
+   out 1918x940 or 1920x1080 within one run and the final concat glued
+   different sizes together.
+   *Fix:* grow the window so the page area equals the viewport (fullscreen
+   fallback, warning if neither fits); scale/pad every clip to
+   `video.resolution`.
+
+4. **Search engines' bot checks were recorded as blank video (high).** From a
+   datacenter IP, Google's results page freezes the renderer (every CDP call
+   then hangs for the 180s default) and Bing shows "One last step".
+   *Fix:* detect frozen/blank/challenge pages after loading and after submitting
+   a search and stop with a `BotChallengeError`; protocol timeout 60s.
+
+5. **Clips opened on the previous clip's last page, cursor at (0,0) (medium).**
+   *Fix:* `prepareForClip()` loads the search home page and parks the cursor
+   before recording starts.
+
+6. **Multiple actions per topic were thrown away (medium).** Round 1 placed
+   the first clip of a window and dropped the rest; a proportional split
+   instead gave short clips ~5s — not enough to get past typing.
+   *Fix:* each topic gets its window plus the gap after it; its clips play in
+   sequence, as many as can each get 12s, shared max-min fairly.
+
+7. **SFX/zoom offset was guessed (medium).** `max(0, videoDuration -
+   moduleDuration)` lost the real offset once round 1 made the video length
+   equal the module length. *Fix:* frames carry the browser's swap time, the
+   video spans exactly start→stop of recording, and the module's start offset
+   is measured directly.
+
+8. **Typing audio drift and trailing clacks (medium).** Per-key relative
+   sleeps accumulated CDP latency; a sample with more keystrokes than the text
+   kept clacking after typing stopped; chained chunks started their audio at
+   the previous sample's end rather than when the chunk started.
+   *Fix:* keys are scheduled on the sample's clock; each sample is cut 150ms
+   after the last keystroke used and starts when its chunk starts. Measured
+   visual-vs-audio offset over typed characters: median +8ms, within ±62ms.
+
+9. **Smaller items.** `waitForNavigation` registered after the click (fast
+   pages make it sit out its timeout); Playwright-only `:has-text()`
+   selectors; hover zoom aimed at a link's corner; topic windows taken from
+   the LLM's segment order; `buildSfxTrack` input indices misaligned when a
+   sample was missing; PNG frames (~1.3MB each) replaced by JPEG q90 (~130KB,
+   visually identical after H.264); picked-up clips lost their zoom.
+
+## Not verifiable here
+
+Live Google results pages: this environment's IP gets bot-checked, so the
+Google-specific selectors (News/Images tabs, definition card, result titles)
+were exercised only against the stand-in, which mirrors their DOM hooks.
