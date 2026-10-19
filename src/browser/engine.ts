@@ -314,6 +314,27 @@ export class BrowserEngine {
       : ZoomPresets.searchBarFocus(timeOffset);
   }
 
+  /**
+   * Elements matching `selector` that are entirely on screen, in document
+   * order. Modules pick hover/click targets after scrolling, when the first
+   * matches in the document are above the viewport — moving to those sends
+   * the cursor off-screen and the click goes nowhere.
+   */
+  async visibleElements(selector: string): Promise<Array<{ handle: PageElement; box: BoundingBox }>> {
+    const { width, height } = this.config.viewport;
+    const visible: Array<{ handle: PageElement; box: BoundingBox }> = [];
+    for (const handle of await this.page.$$(selector)) {
+      const box = await handle.boundingBox().catch(() => null);
+      if (
+        box && box.width > 0 && box.height > 0 &&
+        box.x >= 0 && box.y >= 0 && box.x + box.width <= width && box.y + box.height <= height
+      ) {
+        visible.push({ handle, box });
+      }
+    }
+    return visible;
+  }
+
   private async findSearchInput(): Promise<{ handle: PageElement; box: BoundingBox } | null> {
     for (const selector of SEARCH_INPUT_SELECTORS) {
       try {

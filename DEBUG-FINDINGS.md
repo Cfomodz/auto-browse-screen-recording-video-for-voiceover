@@ -233,8 +233,15 @@ Several problems only show up that way.
    after the last keystroke used and starts when its chunk starts. Measured
    visual-vs-audio offset over typed characters: median +8ms, within ±62ms.
 
-9. **Smaller items.** `waitForNavigation` registered after the click (fast
-   pages make it sit out its timeout); Playwright-only `:has-text()`
+9. **Hovers and clicks aimed off-screen (medium).** After scrolling, modules
+   picked the first matching elements in the document — by then above the
+   viewport — so the cursor left the screen and the news-article click never
+   happened (the clip ended on 15s of a static page with no cursor).
+   *Fix:* `visibleElements()` picks targets that are on screen.
+
+10. **Smaller items.** `waitForNavigation` registered after the click (fast
+   pages make it sit out its timeout) and waiting for network idle on
+   external sites (their trackers never go idle); Playwright-only `:has-text()`
    selectors; hover zoom aimed at a link's corner; topic windows taken from
    the LLM's segment order; `buildSfxTrack` input indices misaligned when a
    sample was missing; PNG frames (~1.3MB each) replaced by JPEG q90 (~130KB,

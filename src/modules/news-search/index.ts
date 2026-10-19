@@ -144,17 +144,14 @@ export class NewsSearchModule extends BrollModule {
     ];
 
     for (const selector of articleSelectors) {
-      const elements = await page.$$(selector);
+      const elements = await browser.visibleElements(selector);
       if (elements.length > 0) {
-        const target = elements[Math.min(Math.floor(Math.random() * 3), elements.length - 1)];
-        const box = await target.boundingBox();
-        if (box) {
-          await browser.clickAt(
-            box.x + box.width / 2,
-            box.y + box.height / 2
-          );
-          return true;
-        }
+        const { box } = elements[Math.min(Math.floor(Math.random() * 3), elements.length - 1)];
+        await browser.clickAt(
+          box.x + box.width / 2,
+          box.y + box.height / 2
+        );
+        return true;
       }
     }
 

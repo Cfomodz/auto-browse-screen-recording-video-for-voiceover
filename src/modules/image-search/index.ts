@@ -138,13 +138,10 @@ export class ImageSearchModule extends BrollModule {
     let images: Array<{ x: number; y: number; w: number; h: number }> = [];
 
     for (const selector of imageSelectors) {
-      const elements = await page.$$(selector);
-      for (const el of elements.slice(0, 20)) {
-        const box = await el.boundingBox();
-        if (box && box.width > 50 && box.height > 50) {
-          images.push({ x: box.x, y: box.y, w: box.width, h: box.height });
-        }
-      }
+      images = (await browser.visibleElements(selector))
+        .filter(({ box }) => box.width > 50 && box.height > 50)
+        .slice(0, 20)
+        .map(({ box }) => ({ x: box.x, y: box.y, w: box.width, h: box.height }));
       if (images.length > 3) break;
     }
 
