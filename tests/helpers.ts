@@ -74,12 +74,13 @@ export function audioHasContent(filePath: string): {
 /** Generate a synthetic WAV file with a sine tone using FFmpeg. */
 export function generateTestTone(
   outputPath: string,
-  options?: { durationSec?: number; frequency?: number; sampleRate?: number }
+  options?: { durationSec?: number; frequency?: number; sampleRate?: number; channels?: number }
 ): void {
-  const { durationSec = 2, frequency = 440, sampleRate = 44100 } = options ?? {};
+  const { durationSec = 2, frequency = 440, sampleRate = 44100, channels = 1 } = options ?? {};
   const result = child_process.spawnSync('ffmpeg', [
     '-f', 'lavfi',
     '-i', `sine=frequency=${frequency}:duration=${durationSec}:sample_rate=${sampleRate}`,
+    '-ac', String(channels),
     '-c:a', 'pcm_s16le',
     '-y',
     outputPath,

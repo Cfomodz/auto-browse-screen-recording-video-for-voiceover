@@ -24,6 +24,21 @@ export class MouseAnimator {
     this.cursorRenderer = cursorRenderer ?? null;
   }
 
+  /** Current pointer position. */
+  get position(): { x: number; y: number } {
+    return { x: this.currentX, y: this.currentY };
+  }
+
+  /** Place the pointer at (x, y) instantly, e.g. to park it before a clip starts. */
+  async jumpTo(x: number, y: number): Promise<void> {
+    await this.page.mouse.move(x, y);
+    if (this.cursorRenderer) {
+      await this.cursorRenderer.moveTo(this.page, x, y);
+    }
+    this.currentX = x;
+    this.currentY = y;
+  }
+
   /** Move the mouse to (x, y) with a realistic animated path. */
   async moveTo(x: number, y: number, durationMs: number = 600): Promise<void> {
     // Stop resting jitter when starting a new move

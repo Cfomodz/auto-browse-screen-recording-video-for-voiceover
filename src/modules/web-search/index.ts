@@ -35,8 +35,8 @@ export class WebSearchModule extends BrollModule {
     this.logger.info(`Web search: "${topic.topic}"`);
     browser.startClipSfxTracking();
 
-    // Zoom to search bar as we navigate
-    zoomKeyframes.push(ZoomPresets.searchBarFocus(elapsed()));
+    // Zoom to the search box
+    zoomKeyframes.push(await browser.searchBoxFocus(elapsed()));
 
     // Perform the search (typing happens here)
     await browser.performSearch(topic.topic);
@@ -56,24 +56,26 @@ export class WebSearchModule extends BrollModule {
     }
 
     // Hover over a result link — zoom to it
-    const links = await page.$$('h3');
+    const links = await browser.visibleElements('h3');
     if (links.length > 0) {
-      const targetLink = links[Math.min(1, links.length - 1)];
-      const box = await targetLink.boundingBox();
-      if (box) {
-        const vw = page.viewport()?.width ?? 1920;
-        const vh = page.viewport()?.height ?? 1080;
-        zoomKeyframes.push(
-          ZoomPresets.elementFocus(elapsed(), box.x / vw, box.y / vh, 'hover-result')
-        );
+      const { box } = links[Math.min(1, links.length - 1)];
+      const vw = page.viewport()?.width ?? 1920;
+      const vh = page.viewport()?.height ?? 1080;
+      zoomKeyframes.push(
+        ZoomPresets.elementFocus(
+          elapsed(),
+          (box.x + box.width / 2) / vw,
+          (box.y + box.height / 2) / vh,
+          'hover-result'
+        )
+      );
 
-        await browser.mouse.moveTo(
-          box.x + box.width / 2,
-          box.y + box.height / 2,
-          800
-        );
-        await humanDelay(1000, 2000);
-      }
+      await browser.mouse.moveTo(
+        box.x + box.width / 2,
+        box.y + box.height / 2,
+        800
+      );
+      await humanDelay(1000, 2000);
     }
 
     // Pull back out

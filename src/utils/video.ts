@@ -11,11 +11,13 @@ export interface AudioLevel {
 /**
  * Measure audio level using ffmpeg volumedetect.
  * Use to verify a clip has actual audio content, not just a silent track.
+ *
+ * @param preFilter  Filters to apply before measuring (e.g. a format conversion)
  */
-export function measureAudioLevel(filePath: string): AudioLevel {
+export function measureAudioLevel(filePath: string, preFilter?: string): AudioLevel {
   const result = child_process.spawnSync('ffmpeg', [
     '-i', path.resolve(filePath),
-    '-af', 'volumedetect',
+    '-af', preFilter ? `${preFilter},volumedetect` : 'volumedetect',
     '-f', 'null',
     '-',
   ], { encoding: 'utf-8', timeout: 15000 });

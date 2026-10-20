@@ -39,7 +39,7 @@ export class NewsSearchModule extends BrollModule {
     browser.startClipSfxTracking();
 
     // Zoom to search bar
-    zoomKeyframes.push(ZoomPresets.searchBarFocus(elapsed()));
+    zoomKeyframes.push(await browser.searchBoxFocus(elapsed()));
 
     // Perform initial search
     await browser.performSearch(topic.topic);
@@ -51,11 +51,10 @@ export class NewsSearchModule extends BrollModule {
     zoomKeyframes.push(ZoomPresets.tabBarFocus(elapsed()));
 
     // Click the "News" tab
-    const newsClicked = await this.clickNewsTab(page, browser);
+    const newsClicked = await browser.withNavigation(() => this.clickNewsTab(page, browser), 10000);
     if (!newsClicked) {
       this.logger.warn('Could not find News tab, continuing with regular results.');
     } else {
-      await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {});
       await humanDelay(1000, 1500);
     }
 
@@ -73,7 +72,11 @@ export class NewsSearchModule extends BrollModule {
     }
 
     // Click on a news headline
-    const articleClicked = await this.clickNewsArticle(page, browser);
+    const articleClicked = await browser.withNavigation(
+      () => this.clickNewsArticle(page, browser),
+      15000,
+      'domcontentloaded'
+    );
     if (articleClicked) {
       // Zoom out for the article page
       zoomKeyframes.push(ZoomPresets.fullWindow(elapsed()));
@@ -101,8 +104,6 @@ export class NewsSearchModule extends BrollModule {
     const selectors = [
       'a[href*="tbm=nws"]',
       'a[data-hveid][href*="news"]',
-      '[role="tab"]:has-text("News")',
-      'a:has-text("News")',
     ];
 
     for (const selector of selectors) {
@@ -143,17 +144,14 @@ export class NewsSearchModule extends BrollModule {
     ];
 
     for (const selector of articleSelectors) {
-      const elements = await page.$$(selector);
+      const elements = await browser.visibleElements(selector);
       if (elements.length > 0) {
-        const target = elements[Math.min(Math.floor(Math.random() * 3), elements.length - 1)];
-        const box = await target.boundingBox();
-        if (box) {
-          await browser.clickAt(
-            box.x + box.width / 2,
-            box.y + box.height / 2
-          );
-          return true;
-        }
+        const { box } = elements[Math.min(Math.floor(Math.random() * 3), elements.length - 1)];
+        await browser.clickAt(
+          box.x + box.width / 2,
+          box.y + box.height / 2
+        );
+        return true;
       }
     }
 

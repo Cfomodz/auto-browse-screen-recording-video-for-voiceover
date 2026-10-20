@@ -318,4 +318,99 @@ describe('SfxManager', () => {
       expect(events[0].timeOffset).toBe(5.0);
     });
   });
+
+  describe('buildTypingTimelineWithKeystrokes', () => {
+    beforeEach(() => {
+      // Single 2-word clip — longer texts must chain multiple chunks
+      const meta: TypingClipMeta = {
+        audioFile: 'clip_001.wav',
+        durationMs: 1000,
+        typedText: 'hello world',
+        wordCount: 2,
+        backspaceSequences: 0,
+        maxConsecutiveBackspaces: 0,
+        keystrokes: [
+          { key: 'h', timestampMs: 0 },
+          { key: 'i', timestampMs: 500 },
+        ],
+      };
+      generateTestTone(path.join(tmpDir, 'typing', 'clip_001.wav'), { durationSec: 1 });
+      writeClipJson(path.join(tmpDir, 'typing'), 'clip_001', meta);
+    });
+
+    it('chunk texts concatenate to exactly the input text (chunk-boundary spaces preserved)', () => {
+      const manager = new SfxManager(makeSfxConfig(tmpDir), logger);
+      const chunks = manager.buildTypingTimelineWithKeystrokes('car wash near me', 0);
+      expect(chunks.length).toBeGreaterThan(1);
+      expect(chunks.map((c) => c.chunkText).join('')).toBe('car wash near me');
+    });
+
+    it('the final chunk has no trailing space', () => {
+      const manager = new SfxManager(makeSfxConfig(tmpDir), logger);
+      const chunks = manager.buildTypingTimelineWithKeystrokes('one two three four', 0);
+      expect(chunks[chunks.length - 1].chunkText.endsWith(' ')).toBe(false);
+      for (const chunk of chunks.slice(0, -1)) {
+        expect(chunk.chunkText.endsWith(' ')).toBe(true);
+      }
+    });
+  });
+
+  describe('degenerate clip filtering', () => {
+    it('prefers a real clip over a tiny slicing artifact despite char-count score', () => {
+      // 66ms single-keystroke artifact whose typedText ("k") is char-closest to "me"
+      generateTestTone(path.join(tmpDir, 'typing', 'tiny.wav'), { durationSec: 0.066 });
+      writeClipJson(path.join(tmpDir, 'typing'), 'tiny', {
+        audioFile: 'tiny.wav',
+        durationMs: 66,
+        typedText: 'k',
+        wordCount: 1,
+        backspaceSequences: 0,
+        maxConsecutiveBackspaces: 0,
+        keystrokes: [
+          { key: 'k', timestampMs: 0 },
+          { key: 'space', timestampMs: 66 },
+        ],
+      });
+      generateTestTone(path.join(tmpDir, 'typing', 'real.wav'), { durationSec: 1.2 });
+      writeClipJson(path.join(tmpDir, 'typing'), 'real', {
+        audioFile: 'real.wav',
+        durationMs: 1200,
+        typedText: 'summer',
+        wordCount: 1,
+        backspaceSequences: 0,
+        maxConsecutiveBackspaces: 0,
+        keystrokes: [
+          { key: 's', timestampMs: 0 },
+          { key: 'u', timestampMs: 200 },
+          { key: 'm', timestampMs: 400 },
+          { key: 'm', timestampMs: 600 },
+          { key: 'e', timestampMs: 800 },
+          { key: 'r', timestampMs: 1000 },
+        ],
+      });
+
+      const manager = new SfxManager(makeSfxConfig(tmpDir), logger);
+      const result = manager.getTypingSfx('me', 0);
+      expect(result).not.toBeNull();
+      expect(path.basename(result!.event.audioFile)).toBe('real.wav');
+    });
+
+    it('still uses a degenerate clip when nothing else exists', () => {
+      generateTestTone(path.join(tmpDir, 'typing', 'tiny.wav'), { durationSec: 0.066 });
+      writeClipJson(path.join(tmpDir, 'typing'), 'tiny', {
+        audioFile: 'tiny.wav',
+        durationMs: 66,
+        typedText: 'k',
+        wordCount: 1,
+        backspaceSequences: 0,
+        maxConsecutiveBackspaces: 0,
+        keystrokes: [{ key: 'k', timestampMs: 0 }],
+      });
+
+      const manager = new SfxManager(makeSfxConfig(tmpDir), logger);
+      const result = manager.getTypingSfx('me', 0);
+      expect(result).not.toBeNull();
+      expect(path.basename(result!.event.audioFile)).toBe('tiny.wav');
+    });
+  });
 });

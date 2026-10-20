@@ -19,6 +19,7 @@ npm run test:unit    # Run unit tests only
 npm run test:integration  # Run integration tests (requires ffmpeg)
 npm run build        # Compile TypeScript
 npx tsc --noEmit     # Type-check without emitting
+npm run e2e          # Real pipeline vs a local stand-in search engine (see Visual Verification)
 ```
 
 ## Project Structure
@@ -33,6 +34,7 @@ src/
     screen-recorder/  # CDP-based frame capture + FFmpeg assembly
     video-assembler/  # Final concat, zoom, SFX mix, voiceover mux
   utils/          # Logger, timing, transcript parser, video helpers
+scripts/e2e/      # mock-search-server.ts (Google-like stand-in) + run-e2e.ts (end-to-end run + contact sheet)
 tests/
   unit/           # Pure logic tests (no ffmpeg needed for most)
   integration/    # FFmpeg output validation tests (require ffmpeg)
@@ -54,9 +56,16 @@ When SFX is enabled, the typing animator selects an audio clip **first**, then u
 4. `VideoAssembler` builds a global SFX track via FFmpeg `adelay`+`amix` and muxes it with the voiceover
 
 ### Recording Flow
-1. `ScreenRecorder` captures CDP screencast frames as PNGs
-2. Frames assembled into video-only MP4 via FFmpeg
-3. `VideoAssembler` processes clips (zoom filter, trim), concatenates, builds SFX track, muxes with voiceover
+1. `BrowserEngine.prepareForClip()` opens the search home page and parks the cursor (not recorded)
+2. `ScreenRecorder` captures CDP screencast frames (JPEG) stamped with the browser's frame-swap time; video time 0 = `startRecording()`, the last frame holds until `stopRecording()`
+3. The pipeline shifts module-relative SFX/zoom times by the measured `clipStartTime - recordingStartTime`, bakes SFX into the clip, and writes `<clip>.json` (timings + full zoom keyframes, reloaded when a clip is reused)
+4. `VideoAssembler` places clips on the voiceover timeline (`placeSegmentsOnTimeline`), applies zoom, concatenates, builds the SFX track, muxes with the voiceover
+
+### Camera
+`ZoomEngine` emits a per-frame `perspective` filter (FFmpeg's `crop` evaluates w/h only once, so it cannot animate a zoom). Each keyframe starts a `transitionMs` move to its region, then the camera holds; crop windows keep the 16:9 aspect.
+
+### Browser window
+Headed Chrome loses ~140px to its UI, and the screencast only captures what the window shows, so `launch()` grows the window until the page area equals `viewport` (fullscreen as fallback). Clips are scaled/padded to `video.resolution` in the recorder and assembler so every clip has the same size.
 
 ## Configuration
 
@@ -65,9 +74,19 @@ The `sfx.enabled` flag must be `true` for audio-driven typing. See `config-car-w
 - `typing` — Base delay, inconsistency, mistake probability (fallback when no SFX)
 - `camera` — Zoom intensity, transition duration, easing curve
 
+## Visual Verification
+
+Unit tests can't tell whether the video looks or sounds right, so check changes by running the real pipeline and looking at the output. In the remote environment (Xvfb and Chromium are installed):
+
+```bash
+xvfb-run -a -s "-screen 0 1920x1080x24" npm run e2e -- --seconds 90 --out /tmp/e2e --fresh
+```
+
+This records real clips against `scripts/e2e/mock-search-server.ts` and writes `/tmp/e2e/contact-sheet.png` (12 frames) — read it with the Read tool, and pull more frames with `ffmpeg -ss <t> -i /tmp/e2e/output.mp4 -frames:v 1 frame.png`. Live Google/Bing answer cloud IPs with bot checks (the pipeline stops with `BotChallengeError`), which is why the stand-in exists. Result links in the stand-in point at Wikipedia/Merriam-Webster; the e2e script routes Chrome through `$HTTPS_PROXY` to reach them.
+
 ## Testing Notes
 
-- Unit tests for `typing-animator`, `extract-clips`, `transcript-parser`, `zoom-engine`, `coverage-analyzer` run without ffmpeg
+- Unit tests for `typing-animator`, `extract-clips`, `transcript-parser`, `zoom-engine`, `coverage-analyzer`, `timeline-placement` run without ffmpeg
 - Unit tests for `sfx-manager` require ffmpeg (they generate test tones)
 - Integration tests in `tests/integration/` all require ffmpeg
 - The SessionStart hook installs ffmpeg automatically in remote environments

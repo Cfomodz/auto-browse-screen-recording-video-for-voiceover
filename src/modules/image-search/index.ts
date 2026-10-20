@@ -38,7 +38,7 @@ export class ImageSearchModule extends BrollModule {
     browser.startClipSfxTracking();
 
     // Zoom to search bar
-    zoomKeyframes.push(ZoomPresets.searchBarFocus(elapsed()));
+    zoomKeyframes.push(await browser.searchBoxFocus(elapsed()));
 
     // Perform initial search
     await browser.performSearch(topic.topic);
@@ -50,11 +50,10 @@ export class ImageSearchModule extends BrollModule {
     zoomKeyframes.push(ZoomPresets.tabBarFocus(elapsed()));
 
     // Click the "Images" tab
-    const imagesClicked = await this.clickImagesTab(page, browser);
+    const imagesClicked = await browser.withNavigation(() => this.clickImagesTab(page, browser), 10000);
     if (!imagesClicked) {
       this.logger.warn('Could not find Images tab, continuing with regular results.');
     } else {
-      await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 10000 }).catch(() => {});
       await humanDelay(1000, 2000);
     }
 
@@ -93,8 +92,6 @@ export class ImageSearchModule extends BrollModule {
     const selectors = [
       'a[href*="tbm=isch"]',
       'a[href*="udm=2"]',
-      '[role="tab"]:has-text("Images")',
-      'a:has-text("Images")',
     ];
 
     for (const selector of selectors) {
@@ -141,13 +138,10 @@ export class ImageSearchModule extends BrollModule {
     let images: Array<{ x: number; y: number; w: number; h: number }> = [];
 
     for (const selector of imageSelectors) {
-      const elements = await page.$$(selector);
-      for (const el of elements.slice(0, 20)) {
-        const box = await el.boundingBox();
-        if (box && box.width > 50 && box.height > 50) {
-          images.push({ x: box.x, y: box.y, w: box.width, h: box.height });
-        }
-      }
+      images = (await browser.visibleElements(selector))
+        .filter(({ box }) => box.width > 50 && box.height > 50)
+        .slice(0, 20)
+        .map(({ box }) => ({ x: box.x, y: box.y, w: box.width, h: box.height }));
       if (images.length > 3) break;
     }
 

@@ -78,7 +78,11 @@ export interface SfxConfig {
   enabled: boolean;
   /** Directory containing audio samples. */
   libraryPath: string;
-  /** Volume level 0.0–1.0 for SFX relative to voiceover. */
+  /**
+   * SFX loudness. Each sample is peak-normalized first, so 1.0 puts its
+   * loudest moment at -12 dBFS (about 12 dB under a full-scale voiceover);
+   * 0.5 is 6 dB quieter. Peaks are capped at -1 dBFS.
+   */
   volume: number;
   mouseClick: {
     enabled: boolean;
@@ -279,7 +283,7 @@ export interface SfxEvent {
   type: 'click' | 'typing' | 'scroll';
   /** Path to the audio sample file. */
   audioFile: string;
-  /** Duration of this SFX clip in seconds. */
+  /** How much of the audio file to play, in seconds (typing clips are cut after the last keystroke used). */
   durationSeconds: number;
 }
 

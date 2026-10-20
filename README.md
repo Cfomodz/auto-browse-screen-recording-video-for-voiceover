@@ -29,6 +29,8 @@ Optional:
 
 - `CHROME_PATH` – Path to Chrome/Chromium if not using the default in config (e.g. Windows: `C:\Program Files\Google\Chrome\Application\chrome.exe`).
 - `DEBUG=1` – Enable debug logging for any command.
+- `BROLL_SEARCH_URL_OVERRIDE` – Use a different search page (`<url>?q=...`), e.g. the local stand-in used by `npm run e2e`.
+- `BROLL_NO_SANDBOX=1` / `BROLL_PROXY=<proxy>` – For running Chrome as root in a container / behind a proxy.
 
 ## Config
 
@@ -47,6 +49,8 @@ Main fields:
 - **outputDir** – Where clips and the final video go.
 - **llm.provider** – `deepseek` or `openai` (uses `DEEPSEEK_API_KEY` or `OPENAI_API_KEY`).
 - **modules** – Enable/disable `web-search`, `news-search`, `definition-search`, `image-search`.
+- **sfx.volume** – Typing/click loudness. Each sample is peak-normalized first, so `1.0` puts its loudest moment at -12 dBFS (about 12 dB under a full-scale voiceover) and `0.5` is 6 dB quieter. Peaks are capped at -1 dBFS.
+- **camera** – `maxZoom` (e.g. 1.4) and `transitionMs` (how long each camera move takes).
 
 Paths in config are relative to the config file’s directory.
 
@@ -90,6 +94,8 @@ Options:
 - **Clips**: Clips are named `TopicSlug_actionType.mp4`. If a clip already exists and has size &gt; 0, that recording is skipped and the existing file is used.
 
 So you can fix something and re-run; only missing steps run again.
+
+**Search engine bot checks:** if the search engine answers with a CAPTCHA, an "unusual traffic" page, or a page that freezes (common from cloud and VPN IPs), the run stops with a `BotChallengeError` instead of recording blank pages. Clips recorded so far are kept and reused on the next run.
 
 ---
 
@@ -171,6 +177,23 @@ node dist/cli.js mouse-coverage -c config.json
 
 ---
 
+## End-to-end check (no API key needed)
+
+Runs the real pipeline — real Chrome, screen recording, SFX, zoom, assembly — against a local stand-in search engine over the first N seconds of the car-wash voiceover, then writes a contact sheet of the result:
+
+```bash
+npm run e2e -- --seconds 90 --out ./output-e2e --fresh
+```
+
+- Writes `output-e2e/output.mp4` and `output-e2e/contact-sheet.png` (12 frames spread across the video).
+- Uses `config-car-wash.json` for everything except paths. Topics are seeded, so no LLM call or API key.
+- Needs Chrome/Chromium (`CHROME_PATH`) and FFmpeg. On Linux without a display, prefix with `xvfb-run -a -s "-screen 0 1920x1080x24"`.
+- `--fresh` re-records the clips; without it, existing clips are reused.
+
+Each clip also gets a `<clip>.json` next to it listing its SFX and zoom timings on the clip's own timeline — the first place to look when something is out of sync.
+
+---
+
 ## Output layout
 
 For a run with `outputDir: "./output-car-wash"`:
@@ -214,6 +237,7 @@ For a run with `outputDir: "./output-car-wash"`:
 |---------------------|----------------------------|
 | `npm run build`     | Compile TypeScript         |
 | `npm test`          | Run tests                  |
+| `npm run e2e`       | End-to-end run against a local stand-in search engine |
 | `npm run dev`       | Run CLI via ts-node        |
 | `npm run debug-audio` | Debug audio devices     |
 

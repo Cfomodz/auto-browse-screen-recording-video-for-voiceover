@@ -213,11 +213,13 @@ describe('SfxManager – buildTypingTimelineWithKeystrokes', () => {
     const chunks = mgr.buildTypingTimelineWithKeystrokes('hello world test', 0);
     // Scoring evaluates full remaining text each time.
     // For 'hello world test' (3 words), the 2-word clip scores closer than the
-    // 1-word clip → chunk0 = 'hello world'.  Remaining 'test' (1 word) matches
-    // the 1-word clip → chunk1 = 'test'.
+    // 1-word clip → chunk0 = 'hello world ' (non-final chunks carry their
+    // joining space so the typed text is exactly the input). Remaining 'test'
+    // (1 word) matches the 1-word clip → chunk1 = 'test'.
     expect(chunks.length).toBe(2);
-    expect(chunks[0].chunkText).toBe('hello world');
+    expect(chunks[0].chunkText).toBe('hello world ');
     expect(chunks[1].chunkText).toBe('test');
+    expect(chunks.map((c) => c.chunkText).join('')).toBe('hello world test');
     // Events should be sequential in time
     expect(chunks[1].event.timeOffset).toBeGreaterThan(chunks[0].event.timeOffset);
   });
